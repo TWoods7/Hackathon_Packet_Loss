@@ -1,5 +1,5 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { PolygonLayer, LineLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { PolygonLayer, LineLayer, ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
 import { rotatingCalipers } from "../scripts/boundingAlgorithm.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -133,6 +133,18 @@ function buildLayers(customers, lifeSupport, onClick, search, visibility) {
       pickable: true,
       onClick,
     }),
+    new GeoJsonLayer({
+      id: "hospitals",
+      data: "/data/hospitals.geojson",
+      pointType: "circle",
+      getPointRadius: 9,
+      pointRadiusUnits: "pixels",
+      getFillColor: [147, 51, 234, 230],
+      stroked: true,
+      getLineColor: OUTLINE_COLOR,
+      lineWidthMinPixels: 2,
+      pickable: false,
+    }),
   ];
 
   if (search && visibility.nearest) {
@@ -229,44 +241,29 @@ async function initMap() {
   let currentSearch = null;
 
   //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
+    const boundaryLayer = rotatingCalipers(
+    customers.map((c) => [c.lng, c.lat]),
+  );
+
+  const getMapLayers = () => [
+    boundaryLayer,
+    ...buildLayers(
+      customers,
+      lifeSupport,
+      showInfo,
+      currentSearch,
+      visibility,
+    ),
+  ];
+
   const overlay = new GoogleMapsOverlay({
-    layers: [
-      rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
-      new ScatterplotLayer({
-        id: "customers",
-        data: customers,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: (c) => KIND_COLORS[c.kind],
-        getRadius: 6,
-        radiusUnits: "meters",
-        radiusMinPixels: 1.5,
-        radiusMaxPixels: 8,
-        opacity: 0.7,
-        pickable: true,
-        onClick: showInfo,
-      }),
-      new ScatterplotLayer({
-        id: "life-support",
-        data: lifeSupport,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: LIFE_SUPPORT_COLOR,
-        getLineColor: OUTLINE_COLOR,
-        stroked: true,
-        lineWidthMinPixels: 1,
-        getRadius: 20,
-        radiusUnits: "meters",
-        radiusMinPixels: 5,
-        radiusMaxPixels: 14,
-        pickable: true,
-        onClick: showInfo,
-      }),
-    ],
+    layers: getMapLayers(),
   });
   overlay.setMap(map);
 
-  const redraw = () =>
-    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility) });
-
+  const redraw = () => {
+    overlay.setProps({ layers: getMapLayers() });
+  };
   document.querySelectorAll(".legend input[data-layer]").forEach((box) => {
     box.addEventListener("change", () => {
       visibility[box.dataset.layer] = box.checked;
