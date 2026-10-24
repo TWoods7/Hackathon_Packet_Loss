@@ -9,13 +9,13 @@ const sendButton = form.querySelector("button");
 
 const GREETING = "Hi! I can help you check on outages near your home. What would you like to know?";
 
-// Placeholder until a real backend exists. Swap this for a fetch() to your
-// server; never call an LLM API with a secret key straight from the browser.
+// Return a temporary reply until the assistant has a backend connection.
 async function getBotReply(text) {
   await new Promise((resolve) => setTimeout(resolve, 500));
   return `You said: "${text}". The assistant isn't connected yet.`;
 }
 
+// Add a message bubble and scroll the conversation to the newest message.
 function addMessage(text, sender) {
   const bubble = document.createElement("div");
   bubble.className = `chatbot-message ${sender}`;
@@ -26,6 +26,7 @@ function addMessage(text, sender) {
   return bubble;
 }
 
+// Show or hide the chat panel and move keyboard focus to the right control.
 function setOpen(open) {
   root.classList.toggle("open", open);
   toggle.setAttribute("aria-expanded", String(open));
@@ -38,13 +39,17 @@ function setOpen(open) {
   }
 }
 
+// Open the assistant when its chat button is clicked.
 toggle.addEventListener("click", () => setOpen(true));
+// Close the assistant when its close button is clicked.
 closeButton.addEventListener("click", () => setOpen(false));
 
+// Let the Escape key close an open chat panel.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && root.classList.contains("open")) setOpen(false);
 });
 
+// Send the message and replace the typing bubble with the reply or an error.
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = input.value.trim();

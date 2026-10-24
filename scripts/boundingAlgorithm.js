@@ -1,14 +1,10 @@
 import { PolygonLayer } from "@deck.gl/layers";
 
 /**
- * Return the convex hull as counterclockwise [x, y] coordinates, starting
- * at the lexicographically smallest point, without repeating the first point.
- * Uses the monotone chain algorithm in O(n log n); the public function name
- * is retained for existing callers. Does not mutate the input.
- * Removes duplicates and intermediate collinear points. Empty input returns [];
- * a single point returns [point], and collinear input returns its endpoints.
+ * Build a map layer around the outermost points without changing the input.
+ * With two or fewer unique points, return their coordinates instead of a layer.
  * @param {Array<[number, number]>} coordinates Finite planar coordinate tuples.
- * @returns {PolygonLayer}
+ * @returns {PolygonLayer|Array<[number, number]>}
  */
 export function rotatingCalipers(coordinates) {
   if (!Array.isArray(coordinates)) {
@@ -26,8 +22,10 @@ export function rotatingCalipers(coordinates) {
     i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
   if (unique.length <= 2) return unique;
 
+  // Check whether three points turn left, turn right, or lie on one line.
   const cross = (a, b, c) =>
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  // Build one side of the boundary, dropping points inside it or along an edge.
   const halfHull = (ordered) => {
     const half = [];
     for (const p of ordered) {
@@ -43,9 +41,8 @@ export function rotatingCalipers(coordinates) {
 }
 
 /**
- * Create a deck.gl shape layer from rotatingCalipers() output.
- * The ordered hull must use [longitude, latitude] coordinates.
- * Hulls with fewer than three vertices produce an empty layer.
+ * Draw an ordered [longitude, latitude] boundary as a filled map polygon.
+ * Fewer than three vertices produce an empty layer.
  */
 export function createBoundingOverlay(hull) {
   return new PolygonLayer({

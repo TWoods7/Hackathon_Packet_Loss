@@ -14,6 +14,7 @@ const KIND_KEYS = ["overhead", "underground", "unknown"];
 
 // deck.gl needs numeric RGB(A) arrays; color values live in style.css.
 const mapStyles = getComputedStyle(document.documentElement);
+// Read a CSS color as the numeric array deck.gl needs.
 function layerColor(property) {
   return mapStyles.getPropertyValue(property).trim().split(",").map(Number);
 }
@@ -30,6 +31,7 @@ const TRANSPARENT_COLOR = layerColor("--map-transparent");
 
 const EARTH_RADIUS_M = 6371000;
 
+// Load Google Maps and wait until it is ready to use.
 function loadGoogleMaps(key) {
   return new Promise((resolve, reject) => {
     window.__initMap = resolve;
@@ -41,6 +43,7 @@ function loadGoogleMaps(key) {
   });
 }
 
+// Fetch customer data and turn each compact row into a customer object.
 async function loadCustomers() {
   const res = await fetch("/data/customers.json");
   if (!res.ok) {
@@ -50,6 +53,7 @@ async function loadCustomers() {
   return rows.map((row) => Object.fromEntries(fields.map((f, i) => [f, row[i]])));
 }
 
+// Calculate the distance in meters between two latitude/longitude locations.
 function distanceMeters(a, b) {
   const toRad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * toRad;
@@ -59,7 +63,7 @@ function distanceMeters(a, b) {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
 }
 
-// Linear scan is fast enough for ~120k points (a few ms)
+// Find the closest customer and return that customer and the distance in meters.
 function findNearestCustomer(customers, point) {
   let nearest = null;
   let best = Infinity;
@@ -73,11 +77,13 @@ function findNearestCustomer(customers, point) {
   return { customer: nearest, distance: best };
 }
 
+// Display a distance in feet, or miles for longer distances.
 function formatDistance(meters) {
   const feet = meters * 3.28084;
   return feet < 1000 ? `${Math.round(feet)} ft` : `${(meters / 1609.344).toFixed(2)} mi`;
 }
 
+// Build the HTML shown when a customer marker is clicked.
 function customerInfoHtml(c) {
   return `
     <div class="info">
@@ -91,6 +97,7 @@ function customerInfoHtml(c) {
     </div>`;
 }
 
+// Fit all customers in view and return their geographic bounds.
 function fitToCustomers(map, customers) {
   const bounds = new google.maps.LatLngBounds();
   for (const c of customers) bounds.extend({ lat: c.lat, lng: c.lng });
@@ -99,6 +106,7 @@ function fitToCustomers(map, customers) {
 }
 
 
+// Build the visible marker and search layers while keeping the boundary.
 function buildLayers(customers, lifeSupport, onClick, search, visibility, boundaryLayer) {
   // Filtering ~120k points takes a few ms, so it's fine to redo on every toggle
   const shownCustomers = customers.filter((c) => visibility[KIND_KEYS[c.kind]]);
@@ -179,6 +187,7 @@ function buildLayers(customers, lifeSupport, onClick, search, visibility, bounda
   return layers;
 }
 
+// Look up an address, favoring matches near the service area.
 function geocode(geocoder, address, bounds) {
   return new Promise((resolve, reject) => {
     // Bias results toward the service area so short addresses resolve locally
@@ -192,6 +201,7 @@ function geocode(geocoder, address, bounds) {
 
 
 
+// Set up the map, customer markers, legend controls, and address search.
 async function initMap() {
   const mapEl = document.getElementById("map");
 
@@ -216,6 +226,7 @@ async function initMap() {
   const serviceBounds = fitToCustomers(map, customers);
 
   const infoWindow = new InfoWindow();
+  // Open a customer details popup at the clicked marker.
   const showInfo = ({ object }) => {
     if (!object) return;
     infoWindow.setContent(customerInfoHtml(object));
@@ -236,9 +247,11 @@ async function initMap() {
   });
   overlay.setMap(map);
 
+  // Refresh the layers using the current checkbox choices and search result.
   const redraw = () =>
     overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayer) });
 
+  // Connect each legend checkbox to its layer visibility setting.
   document.querySelectorAll(".legend input[data-layer]").forEach((box) => {
     box.addEventListener("change", () => {
       visibility[box.dataset.layer] = box.checked;
@@ -256,12 +269,14 @@ async function initMap() {
   const button = form.querySelector("button");
   const resultEl = document.getElementById("search-result");
 
+  // Show search details or an error below the address input.
   const showResult = (html, isError = false) => {
     resultEl.hidden = false;
     resultEl.classList.toggle("error", isError);
     resultEl.innerHTML = html;
   };
 
+  // Find the entered address and highlight its nearest customer on the map.
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const query = input.value.trim();
@@ -297,6 +312,7 @@ async function initMap() {
   });
 }
 
+// Show a message on the page if the map fails to start.
 initMap().catch((err) => {
   console.error(err);
   document.getElementById("map").innerHTML = `<p class="map-error">${err.message}</p>`;
