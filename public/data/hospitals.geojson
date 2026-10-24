@@ -1,0 +1,12 @@
+{
+"type": "FeatureCollection",
+"name": "hospitals",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{"type":"Feature","properties":{"NAME":"Catawba Hospital","ADDRESS":"5525 Catawba Hospital Drive","CITY":"Catawba","STATE":"VA","ZIPCODE":"24070"},"geometry":{"type":"Point","coordinates":[-80.110166840062973,37.391553586141953,0.0]}},
+{"type":"Feature","properties":{"NAME":"LewisGale Medical Center","ADDRESS":"1900 Electric Road","CITY":"Salem","STATE":"VA","ZIPCODE":"24153"},"geometry":{"type":"Point","coordinates":[-80.031677114339871,37.263346339108971,0.0]}},
+{"type":"Feature","properties":{"NAME":"Salem Veterans Affairs Medical Center","ADDRESS":"1970 Roanoke Boulevard","CITY":"Salem","STATE":"VA","ZIPCODE":"24153"},"geometry":{"type":"Point","coordinates":[-80.018608111871089,37.274348341626599,0.0]}},
+{"type":"Feature","properties":{"NAME":"Carilion Roanoke Memorial Hospital","ADDRESS":"1906 Bellview Avenue","CITY":"Roanoke","STATE":"VA","ZIPCODE":"24014"},"geometry":{"type":"Point","coordinates":[-79.942274487458633,37.25121654000916,0.0]}},
+{"type":"Feature","properties":{"NAME":"Carilion Roanoke Community Hospital","ADDRESS":"101 Elm Avenue Southeast","CITY":"Roanoke","STATE":"VA","ZIPCODE":"24013"},"geometry":{"type":"Point","coordinates":[-79.939458086684922,37.265672343385162,0.0]}}
+]
+}
