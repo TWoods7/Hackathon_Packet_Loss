@@ -9,6 +9,9 @@ const DEFAULT_CENTER = { lat: 37.237, lng: -79.949 };
 
 // Service kind codes from scripts/build-customers.js
 const KIND_LABELS = ["Overhead", "Underground", "Unknown"];
+// Legend checkbox keys for each kind code; must match data-layer in map.html
+const KIND_KEYS = ["overhead", "underground", "unknown"];
+
 // deck.gl needs numeric RGB(A) arrays; color values live in style.css.
 const mapStyles = getComputedStyle(document.documentElement);
 function layerColor(property) {
@@ -95,11 +98,15 @@ function fitToCustomers(map, customers) {
   return bounds;
 }
 
-function buildLayers(customers, lifeSupport, onClick, search) {
+
+function buildLayers(customers, lifeSupport, onClick, search, visibility) {
+  // Filtering ~120k points takes a few ms, so it's fine to redo on every toggle
+  const shownCustomers = customers.filter((c) => visibility[KIND_KEYS[c.kind]]);
+
   const layers = [
     new ScatterplotLayer({
       id: "customers",
-      data: customers,
+      data: shownCustomers,
       getPosition: (c) => [c.lng, c.lat],
       getFillColor: (c) => KIND_COLORS[c.kind],
       getRadius: 6,
@@ -113,6 +120,7 @@ function buildLayers(customers, lifeSupport, onClick, search) {
     new ScatterplotLayer({
       id: "life-support",
       data: lifeSupport,
+      visible: visibility.lifeSupport,
       getPosition: (c) => [c.lng, c.lat],
       getFillColor: LIFE_SUPPORT_COLOR,
       getLineColor: OUTLINE_COLOR,
@@ -127,7 +135,7 @@ function buildLayers(customers, lifeSupport, onClick, search) {
     }),
   ];
 
-  if (search) {
+  if (search && visibility.nearest) {
     const { address, nearest } = search;
     layers.push(
       new LineLayer({
@@ -223,40 +231,26 @@ async function initMap() {
 
   const lifeSupport = customers.filter((c) => c.lifeSupport);
 
+  // Legend checkbox state; keys match data-layer in map.html
+  const visibility = { overhead: true, underground: true, unknown: true, lifeSupport: true, nearest: true };
+  let currentSearch = null;
+
+  //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
   const overlay = new GoogleMapsOverlay({
-    layers: [
-      //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
-      new ScatterplotLayer({
-        id: "customers",
-        data: customers,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: (c) => KIND_COLORS[c.kind],
-        getRadius: 6,
-        radiusUnits: "meters",
-        radiusMinPixels: 1.5,
-        radiusMaxPixels: 8,
-        opacity: 0.7,
-        pickable: true,
-        onClick: showInfo,
-      }),
-      new ScatterplotLayer({
-        id: "life-support",
-        data: lifeSupport,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: LIFE_SUPPORT_COLOR,
-        getLineColor: OUTLINE_COLOR,
-        stroked: true,
-        lineWidthMinPixels: 1,
-        getRadius: 20,
-        radiusUnits: "meters",
-        radiusMinPixels: 5,
-        radiusMaxPixels: 14,
-        pickable: true,
-        onClick: showInfo,
-      }),
-    ],
+    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility),
   });
   overlay.setMap(map);
+
+  const redraw = () =>
+    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility) });
+
+  document.querySelectorAll(".legend input[data-layer]").forEach((box) => {
+    box.addEventListener("change", () => {
+      visibility[box.dataset.layer] = box.checked;
+      redraw();
+    });
+  });
+
 
   document.getElementById("customer-count").textContent =
     `${customers.length.toLocaleString()} customers · ${lifeSupport.length} life support`;
@@ -285,7 +279,8 @@ async function initMap() {
       const address = { lat: loc.lat(), lng: loc.lng() };
       const { customer: nearest, distance } = findNearestCustomer(customers, address);
 
-      overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, { address, nearest }) });
+      currentSearch = { address, nearest };
+      redraw();
 
       const view = new google.maps.LatLngBounds();
       view.extend(address);
