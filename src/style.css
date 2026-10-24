@@ -5,6 +5,15 @@
   --accent: #bb0000;
   --nav-bg: #ffffff;
   --border: #e3e3e8;
+  /* RGB(A) channels shared by deck.gl layers and the map legend. */
+  --map-overhead: 37, 99, 235;
+  --map-underground: 22, 163, 74;
+  --map-unknown: 140, 140, 150;
+  --map-life-support: 220, 38, 38;
+  --map-nearest: 250, 204, 21;
+  --map-address: 17, 17, 17;
+  --map-outline: 255, 255, 255;
+  --map-transparent: 0, 0, 0, 0;
 }
 
 * {
@@ -145,7 +154,7 @@ body {
 }
 
 .life-support {
-  color: rgb(220, 38, 38);
+  color: rgb(var(--map-life-support));
   font-weight: 600;
 }
 

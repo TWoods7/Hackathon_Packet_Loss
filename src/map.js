@@ -1,5 +1,6 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { LineLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { PolygonLayer, LineLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { rotatingCalipers } from "../scripts/boundingAlgorithm.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -8,14 +9,21 @@ const DEFAULT_CENTER = { lat: 37.237, lng: -79.949 };
 
 // Service kind codes from scripts/build-customers.js
 const KIND_LABELS = ["Overhead", "Underground", "Unknown"];
+// deck.gl needs numeric RGB(A) arrays; color values live in style.css.
+const mapStyles = getComputedStyle(document.documentElement);
+function layerColor(property) {
+  return mapStyles.getPropertyValue(property).trim().split(",").map(Number);
+}
 const KIND_COLORS = [
-  [37, 99, 235],
-  [22, 163, 74],
-  [140, 140, 150],
+  layerColor("--map-overhead"),
+  layerColor("--map-underground"),
+  layerColor("--map-unknown"),
 ];
-const LIFE_SUPPORT_COLOR = [220, 38, 38];
-const NEAREST_COLOR = [250, 204, 21];
-const ADDRESS_COLOR = [17, 17, 17];
+const LIFE_SUPPORT_COLOR = layerColor("--map-life-support");
+const NEAREST_COLOR = layerColor("--map-nearest");
+const ADDRESS_COLOR = layerColor("--map-address");
+const OUTLINE_COLOR = layerColor("--map-outline");
+const TRANSPARENT_COLOR = layerColor("--map-transparent");
 
 const EARTH_RADIUS_M = 6371000;
 
@@ -107,7 +115,7 @@ function buildLayers(customers, lifeSupport, onClick, search) {
       data: lifeSupport,
       getPosition: (c) => [c.lng, c.lat],
       getFillColor: LIFE_SUPPORT_COLOR,
-      getLineColor: [255, 255, 255],
+      getLineColor: OUTLINE_COLOR,
       stroked: true,
       lineWidthMinPixels: 1,
       getRadius: 20,
@@ -134,7 +142,7 @@ function buildLayers(customers, lifeSupport, onClick, search) {
         id: "nearest",
         data: [nearest],
         getPosition: (c) => [c.lng, c.lat],
-        getFillColor: [0, 0, 0, 0],
+        getFillColor: TRANSPARENT_COLOR,
         getLineColor: NEAREST_COLOR,
         stroked: true,
         getLineWidth: 4,
@@ -149,7 +157,7 @@ function buildLayers(customers, lifeSupport, onClick, search) {
         data: [address],
         getPosition: (a) => [a.lng, a.lat],
         getFillColor: ADDRESS_COLOR,
-        getLineColor: [255, 255, 255],
+        getLineColor: OUTLINE_COLOR,
         stroked: true,
         getLineWidth: 2,
         lineWidthUnits: "pixels",
@@ -172,6 +180,8 @@ function geocode(geocoder, address, bounds) {
     });
   });
 }
+
+
 
 async function initMap() {
   const mapEl = document.getElementById("map");
@@ -207,7 +217,37 @@ async function initMap() {
   const lifeSupport = customers.filter((c) => c.lifeSupport);
 
   const overlay = new GoogleMapsOverlay({
-    layers: buildLayers(customers, lifeSupport, showInfo, null),
+    layers: [
+      //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
+      new ScatterplotLayer({
+        id: "customers",
+        data: customers,
+        getPosition: (c) => [c.lng, c.lat],
+        getFillColor: (c) => KIND_COLORS[c.kind],
+        getRadius: 6,
+        radiusUnits: "meters",
+        radiusMinPixels: 1.5,
+        radiusMaxPixels: 8,
+        opacity: 0.7,
+        pickable: true,
+        onClick: showInfo,
+      }),
+      new ScatterplotLayer({
+        id: "life-support",
+        data: lifeSupport,
+        getPosition: (c) => [c.lng, c.lat],
+        getFillColor: LIFE_SUPPORT_COLOR,
+        getLineColor: OUTLINE_COLOR,
+        stroked: true,
+        lineWidthMinPixels: 1,
+        getRadius: 20,
+        radiusUnits: "meters",
+        radiusMinPixels: 5,
+        radiusMaxPixels: 14,
+        pickable: true,
+        onClick: showInfo,
+      }),
+    ],
   });
   overlay.setMap(map);
 

@@ -27,14 +27,15 @@
       <div class="legend">
         <strong>Customers</strong>
         <div id="customer-count">Loading…</div>
-        <div><span class="dot" style="background: rgb(37, 99, 235)"></span>Overhead</div>
-        <div><span class="dot" style="background: rgb(22, 163, 74)"></span>Underground</div>
-        <div><span class="dot" style="background: rgb(140, 140, 150)"></span>Unknown</div>
-        <div><span class="dot" style="background: rgb(220, 38, 38)"></span>Life support</div>
-        <div><span class="dot ring" style="border-color: rgb(250, 204, 21)"></span>Nearest to you</div>
+        <div><span class="dot" style="background: rgb(var(--map-overhead))"></span>Overhead</div>
+        <div><span class="dot" style="background: rgb(var(--map-underground))"></span>Underground</div>
+        <div><span class="dot" style="background: rgb(var(--map-unknown))"></span>Unknown</div>
+        <div><span class="dot" style="background: rgb(var(--map-life-support))"></span>Life support</div>
+        <div><span class="dot ring" style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</div>
       </div>
     </div>
 
     <script type="module" src="/src/map.js"></script>
   </body>
 </html>
+
