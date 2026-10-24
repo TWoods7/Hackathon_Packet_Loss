@@ -211,13 +211,6 @@ async function initMap() {
     mapTypeControlOptions: {
       position: google.maps.ControlPosition.TOP_RIGHT,
     },
-    // Default spot (bottom-right) sits under the chatbot
-    cameraControlOptions: {
-      position: google.maps.ControlPosition.RIGHT_CENTER,
-    },
-    streetViewControlOptions: {
-      position: google.maps.ControlPosition.RIGHT_CENTER,
-    },
   });
   const serviceBounds = fitToCustomers(map, customers);
 
@@ -237,7 +230,37 @@ async function initMap() {
 
   //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
   const overlay = new GoogleMapsOverlay({
-    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility),
+    layers: [
+      rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
+      new ScatterplotLayer({
+        id: "customers",
+        data: customers,
+        getPosition: (c) => [c.lng, c.lat],
+        getFillColor: (c) => KIND_COLORS[c.kind],
+        getRadius: 6,
+        radiusUnits: "meters",
+        radiusMinPixels: 1.5,
+        radiusMaxPixels: 8,
+        opacity: 0.7,
+        pickable: true,
+        onClick: showInfo,
+      }),
+      new ScatterplotLayer({
+        id: "life-support",
+        data: lifeSupport,
+        getPosition: (c) => [c.lng, c.lat],
+        getFillColor: LIFE_SUPPORT_COLOR,
+        getLineColor: OUTLINE_COLOR,
+        stroked: true,
+        lineWidthMinPixels: 1,
+        getRadius: 20,
+        radiusUnits: "meters",
+        radiusMinPixels: 5,
+        radiusMaxPixels: 14,
+        pickable: true,
+        onClick: showInfo,
+      }),
+    ],
   });
   overlay.setMap(map);
 
