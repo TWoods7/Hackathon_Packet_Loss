@@ -1,5 +1,5 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { PolygonLayer, LineLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { LineLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { rotatingCalipers } from "../scripts/boundingAlgorithm.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -99,11 +99,12 @@ function fitToCustomers(map, customers) {
 }
 
 
-function buildLayers(customers, lifeSupport, onClick, search, visibility) {
+function buildLayers(customers, lifeSupport, onClick, search, visibility, boundaryLayer) {
   // Filtering ~120k points takes a few ms, so it's fine to redo on every toggle
   const shownCustomers = customers.filter((c) => visibility[KIND_KEYS[c.kind]]);
 
   const layers = [
+    boundaryLayer,
     new ScatterplotLayer({
       id: "customers",
       data: shownCustomers,
@@ -228,44 +229,15 @@ async function initMap() {
   const visibility = { overhead: true, underground: true, unknown: true, lifeSupport: true, nearest: true };
   let currentSearch = null;
 
-  //rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
+  // Keep the boundary independent of marker visibility and reuse it on redraw.
+  const boundaryLayer = rotatingCalipers(customers.map((c) => [c.lng, c.lat]));
   const overlay = new GoogleMapsOverlay({
-    layers: [
-      rotatingCalipers(customers.map((c) => [c.lng, c.lat])),
-      new ScatterplotLayer({
-        id: "customers",
-        data: customers,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: (c) => KIND_COLORS[c.kind],
-        getRadius: 6,
-        radiusUnits: "meters",
-        radiusMinPixels: 1.5,
-        radiusMaxPixels: 8,
-        opacity: 0.7,
-        pickable: true,
-        onClick: showInfo,
-      }),
-      new ScatterplotLayer({
-        id: "life-support",
-        data: lifeSupport,
-        getPosition: (c) => [c.lng, c.lat],
-        getFillColor: LIFE_SUPPORT_COLOR,
-        getLineColor: OUTLINE_COLOR,
-        stroked: true,
-        lineWidthMinPixels: 1,
-        getRadius: 20,
-        radiusUnits: "meters",
-        radiusMinPixels: 5,
-        radiusMaxPixels: 14,
-        pickable: true,
-        onClick: showInfo,
-      }),
-    ],
+    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayer),
   });
   overlay.setMap(map);
 
   const redraw = () =>
-    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility) });
+    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayer) });
 
   document.querySelectorAll(".legend input[data-layer]").forEach((box) => {
     box.addEventListener("change", () => {
