@@ -18,28 +18,41 @@
   </nav>
 
   <div class="map-wrap">
-    <div id="map"></div>
-    <div class="search-panel">
-      <form id="search-form">
-        <input id="search-input" type="search" placeholder="Enter your home address" autocomplete="street-address"
-          required />
-        <button type="submit">Search</button>
-      </form>
-      <div id="search-result" hidden></div>
-    </div>
-    <div class="legend">
-      <strong>Customers</strong>
-      <div id="customer-count">Loading…</div>
-      <label><input type="checkbox" data-layer="overhead" checked /><span class="dot"
-          style="background: rgb(var(--map-overhead))"></span>Overhead</label>
-      <label><input type="checkbox" data-layer="underground" checked /><span class="dot"
-          style="background: rgb(var(--map-underground))"></span>Underground</label>
-      <label><input type="checkbox" data-layer="unknown" checked /><span class="dot"
-          style="background: rgb(var(--map-unknown))"></span>Unknown</label>
-      <label><input type="checkbox" data-layer="lifeSupport" checked /><span class="dot"
-          style="background: rgb(var(--map-life-support))"></span>Life support</label>
-      <label><input type="checkbox" data-layer="nearest" checked /><span class="dot ring"
-          style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
+    <div id="map" tabindex="-1"></div>
+    <div class="map-controls">
+      <div class="search-panel">
+        <form id="search-form">
+          <input id="search-input" type="search" placeholder="Enter your home address" autocomplete="street-address"
+            required />
+          <button type="submit">Search</button>
+        </form>
+        <div id="search-result" hidden></div>
+      </div>
+      <section id="hull-panel" class="hull-panel" aria-hidden="true" inert aria-labelledby="hull-panel-title">
+        <div class="hull-panel-inner">
+          <div class="hull-panel-card">
+            <header class="hull-panel-header">
+              <h2 id="hull-panel-title">Boundary details</h2>
+              <button id="hull-panel-close" type="button" aria-label="Close boundary details">&times;</button>
+            </header>
+            <p>test</p>
+          </div>
+        </div>
+      </section>
+      <div class="legend">
+        <strong>Customers</strong>
+        <div id="customer-count">Loading…</div>
+        <label><input type="checkbox" data-layer="overhead" checked /><span class="dot"
+            style="background: rgb(var(--map-overhead))"></span>Overhead</label>
+        <label><input type="checkbox" data-layer="underground" checked /><span class="dot"
+            style="background: rgb(var(--map-underground))"></span>Underground</label>
+        <label><input type="checkbox" data-layer="unknown" checked /><span class="dot"
+            style="background: rgb(var(--map-unknown))"></span>Unknown</label>
+        <label><input type="checkbox" data-layer="lifeSupport" checked /><span class="dot"
+            style="background: rgb(var(--map-life-support))"></span>Life support</label>
+        <label><input type="checkbox" data-layer="nearest" checked /><span class="dot ring"
+            style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
+      </div>
     </div>
   </div>
 

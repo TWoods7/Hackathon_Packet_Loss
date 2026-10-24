@@ -28,6 +28,10 @@ const NEAREST_COLOR = layerColor("--map-nearest");
 const ADDRESS_COLOR = layerColor("--map-address");
 const OUTLINE_COLOR = layerColor("--map-outline");
 const TRANSPARENT_COLOR = layerColor("--map-transparent");
+const HULL_FILL_COLOR = layerColor("--map-hull-fill");
+const HULL_SELECTED_FILL_COLOR = layerColor("--map-hull-selected-fill");
+const HULL_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-line-width"));
+const HULL_HOVER_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-hover-line-width"));
 
 const EARTH_RADIUS_M = 6371000;
 
@@ -103,6 +107,40 @@ function fitToCustomers(map, customers) {
   for (const c of customers) bounds.extend({ lat: c.lat, lng: c.lng });
   map.fitBounds(bounds);
   return bounds;
+}
+
+// Keep boundary selection in sync with the panel's toggle and close actions.
+function setupHullPanel(mapEl, onSelectionChange) {
+  const panel = document.getElementById("hull-panel");
+  const closeButton = document.getElementById("hull-panel-close");
+
+  // Slide the panel in or out and move focus to a visible control.
+  const setPanelOpen = (open) => {
+    panel.classList.toggle("is-open", open);
+    panel.setAttribute("aria-hidden", String(!open));
+    panel.inert = !open;
+    onSelectionChange(open);
+    if (open) closeButton.focus({ preventScroll: true });
+    else mapEl.focus({ preventScroll: true });
+  };
+
+  // Close the panel when its close button is clicked.
+  closeButton.addEventListener("click", () => setPanelOpen(false));
+
+  // Let Escape dismiss the panel while it is open.
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && panel.classList.contains("is-open")) {
+      setPanelOpen(false);
+    }
+  });
+
+  // Select or deselect the boundary and toggle its details panel.
+  const toggleHullPanel = () => {
+    console.log("clicked");
+    setPanelOpen(!panel.classList.contains("is-open"));
+    return true;
+  };
+  return toggleHullPanel;
 }
 
 
@@ -239,17 +277,58 @@ async function initMap() {
   // Legend checkbox state; keys match data-layer in map.html
   const visibility = { overhead: true, underground: true, unknown: true, lifeSupport: true, nearest: true };
   let currentSearch = null;
+  let boundaryHovered = false;
+  let boundarySelected = false;
+
+  // Update the persistent selection when the panel opens or closes.
+  const updateHullSelection = (selected) => {
+    boundarySelected = selected;
+    updateBoundaryAppearance();
+  };
+  const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
   // Keep the boundary independent of marker visibility and reuse it on redraw.
-  const boundaryLayer = rotatingCalipers(customers.map((c) => [c.lng, c.lat]));
+  let boundaryLayer = rotatingCalipers(customers.map((c) => [c.lng, c.lat]), {
+    getFillColor: HULL_FILL_COLOR,
+    getLineColor: layerColor("--map-hull-outline"),
+    getLineWidth: HULL_LINE_WIDTH,
+    lineWidthUnits: "pixels",
+    onClick: toggleHullPanel,
+  });
+
+  // Keep selected hulls thicker and more opaque, even after the mouse leaves.
+  const updateBoundaryAppearance = () => {
+    boundaryLayer = boundaryLayer.clone({
+      getFillColor: boundarySelected ? HULL_SELECTED_FILL_COLOR : HULL_FILL_COLOR,
+      getLineWidth: boundarySelected || boundaryHovered ? HULL_HOVER_LINE_WIDTH : HULL_LINE_WIDTH,
+    });
+    redraw();
+  };
+
+  // Update hover styling without clearing a clicked selection.
+  const updateHullHover = ({ picked, layer }) => {
+    const hovered = Boolean(picked && layer?.id === boundaryLayer.id);
+    if (hovered === boundaryHovered) return;
+    boundaryHovered = hovered;
+    updateBoundaryAppearance();
+  };
+
+  // Show a small text box only while the hull is under the mouse.
+  const hullTooltip = ({ picked, layer }) =>
+    picked && layer?.id === boundaryLayer.id
+      ? { text: "test", className: "hull-tooltip" }
+      : null;
+
   const overlay = new GoogleMapsOverlay({
     layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayer),
+    onHover: updateHullHover,
+    getTooltip: hullTooltip,
   });
-  overlay.setMap(map);
 
   // Refresh the layers using the current checkbox choices and search result.
   const redraw = () =>
     overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayer) });
+  overlay.setMap(map);
 
   // Connect each legend checkbox to its layer visibility setting.
   document.querySelectorAll(".legend input[data-layer]").forEach((box) => {

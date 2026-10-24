@@ -14,6 +14,11 @@
   --map-address: 17, 17, 17;
   --map-outline: 255, 255, 255;
   --map-transparent: 0, 0, 0, 0;
+  --map-hull-fill: 220, 38, 38, 40;
+  --map-hull-selected-fill: 220, 38, 38, 75;
+  --map-hull-outline: 220, 38, 38;
+  --map-hull-line-width: 2;
+  --map-hull-hover-line-width: 5;
 }
 
 * {
@@ -116,16 +121,48 @@ body {
   color: var(--accent);
 }
 
+/* Override deck.gl's inline tooltip colors and spacing. */
+.hull-tooltip {
+  background-color: var(--nav-bg) !important;
+  color: var(--fg) !important;
+  padding: 6px 10px !important;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
 .map-wrap {
   position: relative;
   flex: 1;
+  min-height: 0;
   display: flex;
 }
 
-.legend {
+.map-controls {
   position: absolute;
+  top: 12px;
   bottom: 24px;
   left: 12px;
+  width: min(380px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.map-controls > * {
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.legend {
+  position: static;
+  align-self: flex-start;
+  margin-top: auto;
   padding: 10px 14px;
   background: var(--nav-bg);
   border: 1px solid var(--border);
@@ -165,15 +202,81 @@ body {
 }
 
 .search-panel {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  width: min(380px, calc(100% - 24px));
+  width: 100%;
   padding: 10px;
   background: var(--nav-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.hull-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  transform: translateX(calc(-100% - 12px));
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.25s ease,
+    transform 0.25s ease,
+    opacity 0.25s ease,
+    visibility 0s linear 0.25s;
+}
+
+.hull-panel.is-open {
+  grid-template-rows: 1fr;
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.hull-panel-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hull-panel-card {
+  padding: 14px;
+  background: var(--nav-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.hull-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hull-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+#hull-panel-close {
+  padding: 0 4px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hull-panel-card p {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hull-panel {
+    transition: none;
+  }
 }
 
 #search-form {

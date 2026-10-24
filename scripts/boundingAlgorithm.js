@@ -4,9 +4,10 @@ import { PolygonLayer } from "@deck.gl/layers";
  * Build a map layer around the outermost points without changing the input.
  * With two or fewer unique points, return their coordinates instead of a layer.
  * @param {Array<[number, number]>} coordinates Finite planar coordinate tuples.
+ * @param {object} layerProps Optional colors and settings for the map layer.
  * @returns {PolygonLayer|Array<[number, number]>}
  */
-export function rotatingCalipers(coordinates) {
+export function rotatingCalipers(coordinates, layerProps = {}) {
   if (!Array.isArray(coordinates)) {
     throw new TypeError('coordinates must be an array of [x, y] tuples');
   }
@@ -37,23 +38,24 @@ export function rotatingCalipers(coordinates) {
     half.pop();
     return half;
   };
-  return createBoundingOverlay([...halfHull(unique), ...halfHull([...unique].reverse())]);
+  return createBoundingOverlay([...halfHull(unique), ...halfHull([...unique].reverse())], layerProps);
 }
 
 /**
  * Draw an ordered [longitude, latitude] boundary as a filled map polygon.
  * Fewer than three vertices produce an empty layer.
  */
-export function createBoundingOverlay(hull) {
+export function createBoundingOverlay(hull, layerProps = {}) {
   return new PolygonLayer({
     id: "customer-convex-hull",
     data: hull.length >= 3 ? [hull] : [],
     getPolygon: (coordinates) => coordinates,
-    getFillColor: [37, 99, 235, 30],
-    getLineColor: [37, 99, 235],
     filled: true,
     stroked: true,
     lineWidthMinPixels: 2,
-    pickable: false,
+    pickable: true,
+    // Log when the hull is clicked.
+    onClick: () => console.log("clicked"),
+    ...layerProps,
   });
 }
