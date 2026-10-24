@@ -189,6 +189,10 @@ async function initMap() {
   const map = new Map(mapEl, {
     center: DEFAULT_CENTER,
     zoom: 10,
+    // Default spot (top-left) sits under the search panel
+    mapTypeControlOptions: {
+      position: google.maps.ControlPosition.TOP_RIGHT,
+    },
   });
   const serviceBounds = fitToCustomers(map, customers);
 
