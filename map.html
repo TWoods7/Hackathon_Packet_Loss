@@ -1,68 +1,73 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Map · Packet Loss</title>
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body class="map-page">
-    <nav class="nav">
-      <a href="/" class="brand">Packet Loss</a>
-      <div class="links">
-        <a href="/">Home</a>
-        <a href="/map.html" class="active">Map</a>
-      </div>
-    </nav>
 
-    <div class="map-wrap">
-      <div id="map"></div>
-      <div class="search-panel">
-        <form id="search-form">
-          <input id="search-input" type="search" placeholder="Enter your home address" autocomplete="street-address" required />
-          <button type="submit">Search</button>
-        </form>
-        <div id="search-result" hidden></div>
-      </div>
-      <div class="legend">
-        <strong>Customers</strong>
-        <div id="customer-count">Loading…</div>
-        <div><span class="dot" style="background: rgb(var(--map-overhead))"></span>Overhead</div>
-        <div><span class="dot" style="background: rgb(var(--map-underground))"></span>Underground</div>
-        <div><span class="dot" style="background: rgb(var(--map-unknown))"></span>Unknown</div>
-        <div><span class="dot" style="background: rgb(var(--map-life-support))"></span>Life support</div>
-        <div><span class="dot ring" style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</div>
-      </div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Map · Packet Loss</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body class="map-page">
+  <nav class="nav">
+    <a href="/" class="brand">Packet Loss</a>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/map.html" class="active">Map</a>
     </div>
+  </nav>
 
-    <div id="chatbot">
-      <button class="chatbot-toggle" type="button" aria-label="Open chat" aria-expanded="false" aria-controls="chatbot-panel">
-        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-          <path
-            d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </button>
-
-      <section id="chatbot-panel" class="chatbot-panel" role="dialog" aria-label="Outage assistant" aria-hidden="true">
-        <header class="chatbot-header">
-          <strong>Outage Assistant</strong>
-          <button class="chatbot-close" type="button" aria-label="Close chat">&times;</button>
-        </header>
-        <div class="chatbot-messages" aria-live="polite"></div>
-        <form class="chatbot-form">
-          <input class="chatbot-input" type="text" placeholder="Ask about outages near you…" autocomplete="off" required />
-          <button type="submit">Send</button>
-        </form>
-      </section>
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="search-panel">
+      <form id="search-form">
+        <input id="search-input" type="search" placeholder="Enter your home address" autocomplete="street-address"
+          required />
+        <button type="submit">Search</button>
+      </form>
+      <div id="search-result" hidden></div>
     </div>
+    <div class="legend">
+      <strong>Customers</strong>
+      <div id="customer-count">Loading…</div>
+      <label><input type="checkbox" data-layer="overhead" checked /><span class="dot"
+          style="background: rgb(var(--map-overhead))"></span>Overhead</label>
+      <label><input type="checkbox" data-layer="underground" checked /><span class="dot"
+          style="background: rgb(var(--map-underground))"></span>Underground</label>
+      <label><input type="checkbox" data-layer="unknown" checked /><span class="dot"
+          style="background: rgb(var(--map-unknown))"></span>Unknown</label>
+      <label><input type="checkbox" data-layer="lifeSupport" checked /><span class="dot"
+          style="background: rgb(var(--map-life-support))"></span>Life support</label>
+      <label><input type="checkbox" data-layer="nearest" checked /><span class="dot ring"
+          style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
+    </div>
+  </div>
 
-    <script type="module" src="/src/map.js"></script>
-    <script type="module" src="/src/chatbot.js"></script>
-  </body>
+  <div id="chatbot">
+    <button class="chatbot-toggle" type="button" aria-label="Open chat" aria-expanded="false"
+      aria-controls="chatbot-panel">
+      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+        <path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linejoin="round" />
+      </svg>
+    </button>
+
+    <section id="chatbot-panel" class="chatbot-panel" role="dialog" aria-label="Outage assistant" aria-hidden="true">
+      <header class="chatbot-header">
+        <strong>Outage Assistant</strong>
+        <button class="chatbot-close" type="button" aria-label="Close chat">&times;</button>
+      </header>
+      <div class="chatbot-messages" aria-live="polite"></div>
+      <form class="chatbot-form">
+        <input class="chatbot-input" type="text" placeholder="Ask about outages near you…" autocomplete="off"
+          required />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+  </div>
+
+  <script type="module" src="/src/map.js"></script>
+  <script type="module" src="/src/chatbot.js"></script>
+</body>
+
 </html>
-
