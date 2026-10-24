@@ -15,7 +15,17 @@
       </div>
     </nav>
 
-    <div id="map"></div>
+    <div class="map-wrap">
+      <div id="map"></div>
+      <div class="legend">
+        <strong>Customers</strong>
+        <div id="customer-count">Loading…</div>
+        <div><span class="dot" style="background: rgb(37, 99, 235)"></span>Overhead</div>
+        <div><span class="dot" style="background: rgb(22, 163, 74)"></span>Underground</div>
+        <div><span class="dot" style="background: rgb(140, 140, 150)"></span>Unknown</div>
+        <div><span class="dot" style="background: rgb(220, 38, 38)"></span>Life support</div>
+      </div>
+    </div>
 
     <script type="module" src="/src/map.js"></script>
   </body>
