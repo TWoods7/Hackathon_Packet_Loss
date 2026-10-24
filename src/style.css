@@ -148,3 +148,61 @@ body {
   color: rgb(220, 38, 38);
   font-weight: 600;
 }
+
+.dot.ring {
+  background: transparent;
+  border: 3px solid;
+  box-sizing: border-box;
+}
+
+.search-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: min(380px, calc(100% - 24px));
+  padding: 10px;
+  background: var(--nav-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+#search-form {
+  display: flex;
+  gap: 8px;
+}
+
+#search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#search-form button {
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#search-form button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+#search-result {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+#search-result.error {
+  color: var(--accent);
+}
