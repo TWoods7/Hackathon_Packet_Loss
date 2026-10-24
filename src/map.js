@@ -203,6 +203,13 @@ async function initMap() {
     mapTypeControlOptions: {
       position: google.maps.ControlPosition.TOP_RIGHT,
     },
+    // Default spot (bottom-right) sits under the chatbot
+    cameraControlOptions: {
+      position: google.maps.ControlPosition.RIGHT_CENTER,
+    },
+    streetViewControlOptions: {
+      position: google.maps.ControlPosition.RIGHT_CENTER,
+    },
   });
   const serviceBounds = fitToCustomers(map, customers);
 
