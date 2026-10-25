@@ -62,8 +62,30 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Map upright Futura to the italic style so only fallback fonts are slanted. */
+@font-face {
+  font-family: "Brand Futura Extra Bold";
+  src: local("Futura Extra Bold"), local("Futura-ExtraBold"),
+    local("Futura ExtraBold"), local("FuturaPT-ExtraBold"),
+    local("Futura Bold"), local("Futura-Bold");
+  font-weight: 800;
+  font-style: italic;
+}
+
+/* Let the browser add weight if only regular Futura is installed. */
+@font-face {
+  font-family: "Brand Futura";
+  src: local("Futura"), local("Futura-Medium"), local("Futura Medium"),
+    local("FuturaPT-Book"), local("Futura PT Book");
+  font-weight: 400;
+  font-style: italic;
+}
+
 .brand {
-  font-weight: 700;
+  font-family: "Brand Futura Extra Bold", "Brand Futura", Impact, "Arial Black", system-ui, sans-serif;
+  font-weight: 800;
+  font-style: italic;
+  text-transform: uppercase;
   font-size: 1.2rem;
   color: var(--accent);
   text-decoration: none;
