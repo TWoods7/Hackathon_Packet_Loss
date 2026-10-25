@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "data:customers": "node scripts/dataBuildScripts/build-customers.js"
+    "data:customers": "node scripts/dataBuildScripts/build-customers.js",
+    "data:grid": "node --max-old-space-size=8192 scripts/dataBuildScripts/build-outage-grid.js"
   },
   "devDependencies": {
     "shapefile": "^0.6.6",

@@ -19,6 +19,8 @@
   --map-hull-outline: 220, 38, 38;
   --map-hull-line-width: 2;
   --map-hull-hover-line-width: 5;
+  --map-no-power: 55, 55, 65;
+  --map-damage: 234, 88, 12;
 }
 
 * {
@@ -271,6 +273,8 @@ body {
   margin: 12px 0 0;
   font-size: 0.85rem;
   line-height: 1.5;
+  /* Outage details use one line per fact. */
+  white-space: pre-line;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -317,6 +321,20 @@ body {
 
 #search-result.error {
   color: var(--accent);
+}
+
+.power-status {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.power-status.no-power {
+  color: var(--accent);
+}
+
+.simulation-note {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 /* Chatbot: a floating button that expands into a chat panel */

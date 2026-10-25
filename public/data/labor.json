@@ -1,0 +1,62 @@
+{
+  "meta": {
+    "source": "Hand-copied from Install_Labor_HackOHIO.xlsx in hackohio/aep_challenge_hack26 (sheets: Labor time material related, Labor only work, Indirect Labor Multiplier). Values rounded to 3 decimals.",
+    "units": "Hours of direct labor per CU (compatible unit). Multiply direct hours by indirectLaborMultiplier to get crew-hours including drive, safety, and setup time.",
+    "recipes": "The workbook gives hours per component, not per damage. 'recipes' is our team's assumption of which components a typical repair of each damage Asset_Type replaces: [component, quantity or \"perPhase\", \"install\" | \"remove\" | \"both\"]. Edit it to change restoration estimates."
+  },
+  "indirectLaborMultiplier": 4.5,
+  "cu": {
+    "crossarm": { "install": 0.374, "remove": 0.212 },
+    "bracket": { "install": 0.617, "remove": 0.254 },
+    "anchor": { "install": 0.397, "remove": 0.119 },
+    "equipmentLead": { "install": 0.65, "remove": 0.206 },
+    "grounding": { "install": 0.532, "remove": 0.153 },
+    "guying": { "install": 0.367, "remove": 0.162 },
+    "deadEnd": { "install": 0.108, "remove": 0.064 },
+    "insulator": { "install": 0.049, "remove": 0.039 },
+    "pin": { "install": 0.066, "remove": 0.042 },
+    "recloser": { "install": 0.573, "remove": 0.525 },
+    "secondaryAttachment": { "install": 0.233, "remove": 0.127 },
+    "service": { "install": 1.693, "remove": 0.48 },
+    "switch": { "install": 1.758, "remove": 1.01 },
+    "fuseCutout": { "install": 0.256, "remove": 0.128 },
+    "connector": { "install": 0.215, "remove": 0.045 }
+  },
+  "poleBySize": [
+    { "size": "Small", "maxFeet": 35, "install": 1.942, "remove": 0.764 },
+    { "size": "Medium", "maxFeet": 55, "install": 2.503, "remove": 0.927 },
+    { "size": "Large", "maxFeet": 999, "install": 3.368, "remove": 1.153 }
+  ],
+  "transformerByKva": [
+    { "kva": 10, "install": 1.189, "remove": 0.808 },
+    { "kva": 15, "install": 1.184, "remove": 0.8 },
+    { "kva": 25, "install": 1.188, "remove": 0.806 },
+    { "kva": 37.5, "install": 1.238, "remove": 0.882 },
+    { "kva": 50, "install": 1.245, "remove": 0.891 },
+    { "kva": 75, "install": 1.278, "remove": 0.937 },
+    { "kva": 100, "install": 1.28, "remove": 0.944 },
+    { "kva": 167, "install": 1.28, "remove": 0.944 },
+    { "kva": 250, "install": 1.33, "remove": 0.962 },
+    { "kva": 333, "install": 1.355, "remove": 0.976 },
+    { "kva": 500, "install": 1.38, "remove": 0.987 },
+    { "kva": 833, "install": 1.364, "remove": 0.98 }
+  ],
+  "adders": {
+    "restrictedAccess": { "hours": 0.5, "label": "Restricted Access Work", "appliesWhen": "Access_Iss = Yes" },
+    "confinedProperty": { "hours": 0.5, "label": "Confined Property Access (backyard)", "appliesWhen": "Special_Eq = Backyard Bucket or Yard Dog" },
+    "remoteSite": { "hours": 1.312, "label": "Remote Location Adder", "appliesWhen": "Special_Eq = Track Hoe or Backhoe" },
+    "specializedHandling": { "hours": 0.5, "label": "Specialized Handling Adder", "appliesWhen": "Special_Eq = Big Bucket, Material Handler, Tandem Bucket, Tandem Line, or Other" }
+  },
+  "recipes": {
+    "Pole": [["pole", 1, "both"], ["crossarm", 1, "both"], ["insulator", 3, "both"], ["pin", 3, "both"], ["grounding", 1, "install"], ["guying", 1, "both"]],
+    "primary": [["connector", 2, "install"], ["deadEnd", 2, "both"], ["insulator", 1, "both"]],
+    "secondary": [["secondaryAttachment", 2, "both"], ["connector", 2, "install"]],
+    "Transformer": [["transformer", "perPhase", "both"], ["equipmentLead", 1, "install"], ["fuseCutout", 1, "both"]],
+    "Fuse Bank": [["fuseCutout", "perPhase", "both"]],
+    "Recloser Bank": [["recloser", "perPhase", "both"], ["equipmentLead", 1, "install"]],
+    "Switch": [["switch", 1, "both"]],
+    "Capacitor Bank": [["equipmentLead", 3, "install"], ["fuseCutout", 3, "both"]],
+    "Step Transformer": [["transformer833", 1, "both"], ["equipmentLead", 1, "install"]],
+    "Light": [["bracket", 1, "both"]]
+  }
+}

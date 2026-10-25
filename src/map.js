@@ -1,6 +1,7 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import { LineLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { rotatingCalipers } from "../scripts/boundingAlgorithm.js";
+import { loadGrid, trippedDevices, computeOutages } from "./outages.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -32,6 +33,11 @@ const HULL_FILL_COLOR = layerColor("--map-hull-fill");
 const HULL_SELECTED_FILL_COLOR = layerColor("--map-hull-selected-fill");
 const HULL_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-line-width"));
 const HULL_HOVER_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-hover-line-width"));
+const NO_POWER_COLOR = layerColor("--map-no-power");
+const DAMAGE_COLOR = layerColor("--map-damage");
+
+// Shown wherever outage results appear: the data has no live outage feed.
+const SIMULATION_NOTE = "Simulated from unrepaired damage reports, not live outage data.";
 
 const EARTH_RADIUS_M = 6371000;
 
@@ -54,14 +60,8 @@ async function loadCustomers() {
     throw new Error("Missing public/data/customers.json. Run `npm run data:customers` first.");
   }
   const { fields, rows } = await res.json();
-  return rows.map((row) => Object.fromEntries(fields.map((f, i) => [f, row[i]])));
-}
-
-// Load the boundary groups and their matching titles and text.
-async function loadTestData() {
-  // A full URL prevents Vite from adding ?import to this public-file request.
-  const url = new URL(`${import.meta.env.BASE_URL}data/testData.js`, window.location.href).href;
-  return import(/* @vite-ignore */ url);
+  // index matches the customer's position in grid.json's customerChains.
+  return rows.map((row, index) => ({ ...Object.fromEntries(fields.map((f, i) => [f, row[i]])), index }));
 }
 
 // Calculate the distance in meters between two latitude/longitude locations.
@@ -106,6 +106,40 @@ function customerInfoHtml(c) {
       <div>Premise: ${c.premise}</div>
       ${c.lifeSupport ? '<div class="life-support">Life support customer</div>' : ""}
     </div>`;
+}
+
+// Build the HTML shown when a damage marker is clicked.
+function damageInfoHtml(d) {
+  return `
+    <div class="info">
+      <strong>${d.damageType ?? "Damage"}</strong>
+      <div>Asset: ${d.assetType}</div>
+      <div>Circuit: ${d.circuit ?? "Unknown"}</div>
+      <div>Reported: ${d.reported ?? "Unknown"}</div>
+      <div>Not yet repaired</div>
+    </div>`;
+}
+
+// Describe a damage list like "2 Pole, 1 primary".
+function damageSummary(damages) {
+  const counts = {};
+  for (const d of damages) counts[d.assetType] = (counts[d.assetType] ?? 0) + 1;
+  return Object.entries(counts).map(([type, n]) => `${n} ${type}`).join(", ") || "Unknown";
+}
+
+// Title and multi-line text for an outage's side panel.
+function outageDetails(zone, device, customers) {
+  const lifeSupport = zone.customers.filter((i) => customers[i].lifeSupport).length;
+  return {
+    title: `Outage: ${device.type} on ${device.circuit ?? "unknown circuit"}`,
+    text: [
+      `${zone.customers.length.toLocaleString()} customers without power` +
+        (lifeSupport ? ` (${lifeSupport} life support)` : ""),
+      `Cause: ${damageSummary(zone.damages)}`,
+      `Estimated repair: ${Math.round(zone.crewHours)} crew-hours`,
+      SIMULATION_NOTE,
+    ].join("\n"),
+  };
 }
 
 // Fit all customers in view and return their geographic bounds.
@@ -161,7 +195,7 @@ function setupHullPanel(mapEl, onSelectionChange) {
 
 
 // Build the visible marker and search layers while keeping all boundaries.
-function buildLayers(customers, lifeSupport, onClick, search, visibility, boundaryLayers) {
+function buildLayers(customers, lifeSupport, onClick, search, visibility, boundaryLayers, outage) {
   // Filtering ~120k points takes a few ms, so it's fine to redo on every toggle
   const shownCustomers = customers.filter((c) => visibility[KIND_KEYS[c.kind]]);
 
@@ -195,6 +229,35 @@ function buildLayers(customers, lifeSupport, onClick, search, visibility, bounda
       radiusMaxPixels: 14,
       pickable: true,
       onClick,
+    }),
+    // Customers inside an outage, drawn over their normal dot.
+    new ScatterplotLayer({
+      id: "no-power",
+      data: outage.noPowerCustomers,
+      visible: visibility.noPower,
+      getPosition: (c) => [c.lng, c.lat],
+      getFillColor: NO_POWER_COLOR,
+      getRadius: 6,
+      radiusUnits: "meters",
+      radiusMinPixels: 2,
+      radiusMaxPixels: 8,
+      pickable: true,
+      onClick,
+    }),
+    // Damaged equipment that hasn't been repaired.
+    new ScatterplotLayer({
+      id: "damage",
+      data: outage.damages,
+      visible: visibility.damage,
+      getPosition: (d) => [d.lng, d.lat],
+      getFillColor: DAMAGE_COLOR,
+      getLineColor: OUTLINE_COLOR,
+      stroked: true,
+      lineWidthMinPixels: 2,
+      getRadius: 8,
+      radiusUnits: "pixels",
+      pickable: true,
+      onClick: outage.onDamageClick,
     }),
   ];
 
@@ -265,16 +328,16 @@ async function initMap() {
     return;
   }
 
-  const [customers, testData] = await Promise.all([
+  const [customers, grid] = await Promise.all([
     loadCustomers(),
-    loadTestData(),
+    loadGrid(),
     loadGoogleMaps(apiKey),
   ]);
-  const { testBounds, testFloats, testText } = testData;
-  const { Map, InfoWindow } = await google.maps.importLibrary("maps");
+  // Renamed so `new Map()` below still means JavaScript's built-in Map.
+  const { Map: GoogleMap, InfoWindow } = await google.maps.importLibrary("maps");
   const { Geocoder } = await google.maps.importLibrary("geocoding");
 
-  const map = new Map(mapEl, {
+  const map = new GoogleMap(mapEl, {
     center: DEFAULT_CENTER,
     zoom: 10,
     // Default spot (top-left) sits under the search panel
@@ -302,6 +365,26 @@ async function initMap() {
 
   const lifeSupport = customers.filter((c) => c.lifeSupport);
 
+  // Work out today's outages from the unrepaired damage.
+  // A storm slider can later pass a bigger tripped set into computeOutages.
+  const { noPower, zones } = computeOutages(grid, trippedDevices(grid.damages), grid.damages);
+  const zoneByCustomer = new Map();
+  for (const zone of zones) for (const i of zone.customers) zoneByCustomer.set(i, zone);
+
+  // Open a damage details popup at the clicked marker.
+  const showDamageInfo = ({ object }) => {
+    if (!object) return;
+    infoWindow.setContent(damageInfoHtml(object));
+    infoWindow.setPosition({ lat: object.lat, lng: object.lng });
+    infoWindow.open(map);
+  };
+
+  const outage = {
+    noPowerCustomers: customers.filter((c) => noPower[c.index]),
+    damages: grid.damages,
+    onDamageClick: showDamageInfo,
+  };
+
   // Reset saved checkbox states so the legend and map both start with items off.
   const legendBoxes = [...document.querySelectorAll(".legend input[data-layer]")];
   const visibility = Object.fromEntries(legendBoxes.map((box) => {
@@ -319,21 +402,25 @@ async function initMap() {
   };
   const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
-  // Create one reusable hull layer for each testBounds group.
-  let boundaryLayers = testBounds.map((coordinates, index) => {
-    const id = `test-boundary-${index + 1}`;
-    return rotatingCalipers(coordinates, {
+  // Create one hull layer around each outage's customers.
+  // Outages with fewer than three locations get no hull; their grey dots still show.
+  const zoneByLayerId = new Map();
+  let boundaryLayers = zones.flatMap((zone) => {
+    const id = `outage-${zone.device}`;
+    const coordinates = zone.customers.map((i) => [customers[i].lng, customers[i].lat]);
+    const details = outageDetails(zone, grid.devices[zone.device], customers);
+    const layer = rotatingCalipers(coordinates, {
       id,
       getFillColor: HULL_FILL_COLOR,
       getLineColor: layerColor("--map-hull-outline"),
       getLineWidth: HULL_LINE_WIDTH,
       lineWidthUnits: "pixels",
-      // Match the panel title and text to this hull's index in testBounds.
-      onClick: () => toggleHullPanel(id, {
-        title: testFloats[index],
-        text: testText[index],
-      }),
+      onClick: () => toggleHullPanel(id, details),
     });
+    // rotatingCalipers returns plain coordinates when there are two or fewer points.
+    if (Array.isArray(layer)) return [];
+    zoneByLayerId.set(id, zone);
+    return [layer];
   });
   const boundaryIds = new Set(boundaryLayers.map((layer) => layer.id));
 
@@ -359,20 +446,25 @@ async function initMap() {
   };
 
   // Show a small text box only while the hull is under the mouse.
-  const hullTooltip = ({ picked, layer }) =>
-    picked && boundaryIds.has(layer?.id)
-      ? { text: "test", className: "hull-tooltip" }
-      : null;
+  const hullTooltip = ({ picked, layer }) => {
+    if (!picked || !boundaryIds.has(layer?.id)) return null;
+    const zone = zoneByLayerId.get(layer.id);
+    const device = grid.devices[zone.device];
+    return {
+      text: `${device.type} outage · ${zone.customers.length.toLocaleString()} without power`,
+      className: "hull-tooltip",
+    };
+  };
 
   const overlay = new GoogleMapsOverlay({
-    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers),
+    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers, outage),
     onHover: updateHullHover,
     getTooltip: hullTooltip,
   });
 
   // Refresh the layers using the current checkbox choices and search result.
   const redraw = () =>
-    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers) });
+    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers, outage) });
   overlay.setMap(map);
 
   // Connect each legend checkbox to its layer visibility setting.
@@ -385,7 +477,20 @@ async function initMap() {
 
 
   document.getElementById("customer-count").textContent =
-    `${customers.length.toLocaleString()} customers · ${lifeSupport.length} life support`;
+    `${customers.length.toLocaleString()} customers · ${lifeSupport.length} life support · ` +
+    `${outage.noPowerCustomers.length.toLocaleString()} without power`;
+
+  // Describe whether a customer has power, and why not.
+  const powerStatus = (customer) => {
+    if (!grid.customerChains[customer.index].length) {
+      return "Power status unknown: no network data for this location.";
+    }
+    const zone = zoneByCustomer.get(customer.index);
+    if (!zone) return "Power on: no reported damage upstream of this location.";
+    const device = grid.devices[zone.device];
+    return `No power: inside a ${device.type.toLowerCase()} outage on ${device.circuit ?? "an unknown circuit"} ` +
+      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} crew-hours of repair.`;
+  };
 
   const geocoder = new Geocoder();
   const form = document.getElementById("search-form");
@@ -427,6 +532,8 @@ async function initMap() {
         <div>Nearest node: ${formatDistance(distance)} away</div>
         <div>Service: ${KIND_LABELS[nearest.kind]} · Circuit ${nearest.circuitId}</div>
         <div>Transformer: ${nearest.transformer}</div>
+        <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
+        <div class="simulation-note">${SIMULATION_NOTE}</div>
       `);
     } catch (err) {
       showResult(err.message, true);
