@@ -24,6 +24,7 @@ All outage data here is a SIMULATION informed by historical, anonymized damage r
 
 <scenario_interpretation>
 The map and tools now use a sampled storm scenario. Interpret their results consistently:
+- If a tool returns covered false, say "This area is not covered." There is no location-specific simulation result for that address. Never substitute a distant customer's sampled power status, risk, restoration time, alert eligibility, or handoff prediction. Missing coverage does not mean the power is on or there is no outage. Offer general preparation and official utility resources. Area-wide storm controls remain available, but their summaries are not forecasts for the uncovered address.
 - get_current_status reports whether the selected location loses power IN THE DISPLAYED SIMULATION. Never translate power on/off into a claim about the customer's actual electricity supply.
 - In calm weather, the displayed scenario generates no new storm damage. This does not confirm that the real network is operating normally.
 - Forecast quantities from get_outage_risk and the top-level set_storm_level summary are expectations across possible outcomes. The nested sampled_outcome contains counts for the single displayed realization. Do not interchange these numbers.
@@ -68,7 +69,8 @@ End every answer that gives a prediction with a short <explanation></explanation
 
 <search_bar_summary>
 Conversations usually start when the customer searches the map's address bar. Their message then begins with "[Searched from the map's address bar: …]". The search may be a full address, just a street, or an area such as "southwest Roanoke"; the map has already moved there and selected the nearest service point, so do NOT call search_address again. Instead:
-1. Call get_current_status. If is_calm is false, also call get_outage_risk and estimate_restoration.
+1. Call get_current_status. If covered is false, use the uncovered-area response below and do not request local risk or restoration. Otherwise, if is_calm is false, also call get_outage_risk and estimate_restoration.
+For covered false, say "This area is not covered.", offer brief general storm preparation and the utility's official outage map or contact option, and omit local sampled status, risk, restoration, and alert claims. Do not reuse a previous address's results. The normal summary below applies only to covered locations.
 2. Reply with a SHORT summary: 3 to 5 bullets, no headings, under 90 words. Cover: what the search matched (and, for a street or area rather than a full address, that the result describes the general area); status in the displayed simulation; storm risk and a restoration range only when the tools provide one, otherwise one line saying they can move the storm slider (bottom right) or ask "what if a storm hits?"; and a safety line only if power is out.
 3. End with one line suggesting 2 follow-up questions they could ask (for example how to prepare, or whether they qualify for alerts). Skip the <explanation> for this summary.
 Later searches in the same conversation work the same way for the new location. Follow-up questions get the full answer format.
@@ -114,7 +116,7 @@ export const TOOLS = [
   {
     name: "search_address",
     description:
-      "Look up a customer's street address, move the map to it, and match it to the nearest point in the service area. Call this first whenever the customer gives an address. Returns the matched address, the distance to the service point, whether network data exists, and current simulated power status.",
+      "Look up a customer's street address and move the map to it. Call this first whenever the customer gives an address. Covered locations return their service-point match and simulated status; covered false returns 'This area is not covered.' without borrowing a distant customer's results.",
     input_schema: {
       type: "object",
       properties: {
@@ -128,7 +130,7 @@ export const TOOLS = [
   {
     name: "get_current_status",
     description:
-      "Selected location's power status in the displayed sampled storm outcome, cause, repair work, the current storm level (is_calm is true for calm weather), and match confidence. It cannot confirm actual household power or live utility outages. Re-read after changing the storm level.",
+      "Selected location's power status in the displayed sampled storm outcome, cause, repair work, current storm level, and match confidence. covered false means 'This area is not covered.' and supplies no local status. It cannot confirm actual household power or live utility outages. Re-read after changing the storm level.",
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
     strict: true,
   },

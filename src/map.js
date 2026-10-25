@@ -1,6 +1,6 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import { LineLayer, PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
-import { buildHexGrid, averageIntoHexes } from "./hexGrid.js";
+import { buildHexGrid, averageIntoHexes, isPointInHexGrid } from "./hexGrid.js";
 import {
   loadGrid,
   prepareForecast,
@@ -60,6 +60,8 @@ const OUTAGE_CELL_DEGREES = 0.9;
 const SIMULATION_NOTE = "One possible storm outcome from historical damage patterns; not live outage information.";
 
 const EARTH_RADIUS_M = 6371000;
+// Outside the forecast tiles, only connect addresses this close to a node.
+const MAX_UNTILED_MATCH_METERS = 300;
 
 // Load Google Maps and wait until it is ready to use.
 function loadGoogleMaps(key) {
@@ -308,7 +310,8 @@ function buildLayers(search, visibility, boundaryLayers, outage) {
     }),
   ];
 
-  if (search && visibility.nearest) {
+  // Only connect the searched address to a node in the covered area.
+  if (search && search.covered !== false) {
     const { address, nearest } = search;
     layers.push(
       new LineLayer({
@@ -331,6 +334,12 @@ function buildLayers(search, visibility, boundaryLayers, outage) {
         getRadius: 14,
         radiusUnits: "pixels",
       }),
+    );
+  }
+  // Keep the searched-address marker even when the area is not covered.
+  if (search) {
+    const { address } = search;
+    layers.push(
       new ScatterplotLayer({
         id: "address",
         data: [address],
@@ -363,7 +372,7 @@ function geocode(geocoder, address, bounds) {
 
 
 
-// Set up the map, customer markers, legend controls, and address search.
+// Set up the map, customer markers, layer controls, and address search.
 async function initMap() {
   const mapEl = document.getElementById("map");
 
@@ -450,12 +459,12 @@ async function initMap() {
     onDamageClick: showDamageInfo,
   };
 
-  // Reset saved checkbox states so the legend and map both start with items off,
-  // except boxes marked data-default="on" (the outage circles).
-  const legendBoxes = [...document.querySelectorAll(".legend input[data-layer]")];
-  const visibility = Object.fromEntries(legendBoxes.map((box) => {
-    box.checked = box.dataset.default === "on";
-    return [box.dataset.layer, box.checked];
+  // Start each layer button in its default state and keep its styling in sync.
+  const layerButtons = [...document.querySelectorAll(".layer-toggles button[data-layer]")];
+  const visibility = Object.fromEntries(layerButtons.map((button) => {
+    const active = button.dataset.default === "on";
+    button.setAttribute("aria-pressed", String(active));
+    return [button.dataset.layer, active];
   }));
   let currentSearch = null;
   let hoveredBoundaryId = null;
@@ -560,17 +569,20 @@ async function initMap() {
     getTooltip: hullTooltip,
   });
 
-  // Refresh the layers using the current checkbox choices and search result.
+  // Refresh the layers using the current toggles and search result.
   const redraw = () =>
     overlay.setProps({ layers: buildLayers(currentSearch, visibility, boundaryLayers, outage) });
   overlay.setMap(map);
 
-  // Connect each legend checkbox to its layer visibility setting.
-  legendBoxes.forEach((box) => {
-    box.addEventListener("change", () => {
-      visibility[box.dataset.layer] = box.checked;
+  // Toggle each layer and its button appearance together.
+  layerButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const layer = button.dataset.layer;
+      const active = !visibility[layer];
+      visibility[layer] = active;
+      button.setAttribute("aria-pressed", String(active));
       // Hiding the outage circles also closes an open outage's panel.
-      if (box.dataset.layer === "outages" && !box.checked && selectedBoundaryId !== null) {
+      if (layer === "outages" && !active && selectedBoundaryId !== null) {
         toggleHullPanel(selectedBoundaryId, {});
       }
       redraw();
@@ -718,7 +730,14 @@ async function initMap() {
   function renderSearchResult() {
     // Startup has no selection, so there is no result panel to refresh yet.
     if (!currentSearch) return;
-    const { nearest, distance, formattedAddress } = currentSearch;
+    const { nearest, distance, formattedAddress, covered } = currentSearch;
+    if (!covered) {
+      showResult(`
+        <div><strong>${formattedAddress}</strong></div>
+        <div>This area is not covered.</div>
+      `, true);
+      return;
+    }
     showResult(`
       <div><strong>${formattedAddress}</strong></div>
       <div>Nearest node: ${formatDistance(distance)} away</div>
@@ -727,26 +746,27 @@ async function initMap() {
     `);
   }
 
-  // Find an address, highlight its nearest customer on the map, and show the result.
+  // Find an address and connect its nearest node only when the area is covered.
   // Used by the search form and the chatbot's search_address tool.
   const searchAddress = async (query) => {
     const result = await geocode(geocoder, query, serviceBounds);
     const loc = result.geometry.location;
     const address = { lat: loc.lat(), lng: loc.lng() };
     const { customer: nearest, distance } = findNearestCustomer(customers, address);
+    const covered = distance <= MAX_UNTILED_MATCH_METERS || isPointInHexGrid(address, outage.hexes);
 
-    currentSearch = { address, nearest, distance, formattedAddress: result.formatted_address };
+    currentSearch = { address, nearest, distance, formattedAddress: result.formatted_address, covered };
     redraw();
 
     const view = new google.maps.LatLngBounds();
     view.extend(address);
-    view.extend({ lat: nearest.lat, lng: nearest.lng });
+    if (covered) view.extend({ lat: nearest.lat, lng: nearest.lng });
     map.fitBounds(view, 80);
     if (map.getZoom() > 18) map.setZoom(18);
 
     input.value = result.formatted_address;
     renderSearchResult();
-    return { formattedAddress: result.formatted_address, customer: nearest, distance };
+    return { formattedAddress: result.formatted_address, customer: nearest, distance, covered };
   };
 
   // Search for the address typed into the form.
@@ -757,7 +777,9 @@ async function initMap() {
 
     button.disabled = true;
     try {
-      const { formattedAddress } = await searchAddress(query);
+      const { formattedAddress, covered } = await searchAddress(query);
+      // Leave uncovered searches on the map so their coverage notice stays visible.
+      if (!covered) return;
       // chatbot.js listens for this and asks the assistant for a summary.
       document.dispatchEvent(new CustomEvent("location-searched", { detail: { query, formattedAddress } }));
     } catch (err) {
@@ -788,6 +810,7 @@ async function initMap() {
       customer: currentSearch.nearest,
       distance: currentSearch.distance,
       formattedAddress: currentSearch.formattedAddress,
+      covered: currentSearch.covered,
     },
   });
 }

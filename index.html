@@ -25,6 +25,12 @@
         <div id="search-result" hidden></div>
         <button id="open-chat" class="open-chat" type="button" hidden>Back to your conversation &rarr;</button>
       </div>
+      <div class="layer-toggles" role="group" aria-label="Map layers">
+        <button class="legend-toggle" type="button" data-layer="outages" data-default="on" aria-pressed="true"><span class="dot"
+            aria-hidden="true" style="background: rgba(var(--map-hull-fill)); border: 2px solid rgb(var(--map-hull-outline))"></span>Area without power</button>
+        <button class="legend-toggle" type="button" data-layer="damage" aria-pressed="false"><span class="dot ring"
+            aria-hidden="true" style="border-color: rgb(var(--map-damage))"></span>Damaged equipment</button>
+      </div>
       <section id="hull-panel" class="hull-panel" aria-hidden="true" inert aria-labelledby="hull-panel-title">
         <div class="hull-panel-inner">
           <div class="hull-panel-card">
@@ -39,12 +45,6 @@
       <div class="legend">
         <strong>Outages</strong>
         <div id="customer-count">Loading…</div>
-        <label><input type="checkbox" data-layer="outages" data-default="on" autocomplete="off" /><span class="dot"
-            style="background: rgba(var(--map-hull-fill)); border: 2px solid rgb(var(--map-hull-outline))"></span>Area without power</label>
-        <label><input type="checkbox" data-layer="damage" autocomplete="off" /><span class="dot ring"
-            style="border-color: rgb(var(--map-damage))"></span>Damaged equipment</label>
-        <label><input type="checkbox" data-layer="nearest" autocomplete="off" /><span class="dot ring"
-            style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
       </div>
     </div>
     <!-- Changing text sits above the controls: the panel is pinned to the
