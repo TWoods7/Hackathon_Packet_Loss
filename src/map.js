@@ -1,5 +1,5 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { LineLayer, PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { buildHexGrid, averageIntoHexes, isPointInHexGrid } from "./hexGrid.js";
 import {
   loadGrid,
@@ -23,7 +23,6 @@ function layerColor(property) {
   return mapStyles.getPropertyValue(property).trim().split(",").map(Number);
 }
 const NEAREST_COLOR = layerColor("--map-nearest");
-const ADDRESS_COLOR = layerColor("--map-address");
 const OUTLINE_COLOR = layerColor("--map-outline");
 const TRANSPARENT_COLOR = layerColor("--map-transparent");
 const HULL_FILL_COLOR = layerColor("--map-hull-fill");
@@ -310,18 +309,10 @@ function buildLayers(search, visibility, boundaryLayers, outage) {
     }),
   ];
 
-  // Only connect the searched address to a node in the covered area.
+  // Highlight the nearest node for a search in the covered area.
   if (search && search.covered !== false) {
-    const { address, nearest } = search;
+    const { nearest } = search;
     layers.push(
-      new LineLayer({
-        id: "address-to-nearest",
-        data: [{ from: address, to: nearest }],
-        getSourcePosition: (d) => [d.from.lng, d.from.lat],
-        getTargetPosition: (d) => [d.to.lng, d.to.lat],
-        getColor: ADDRESS_COLOR,
-        getWidth: 2,
-      }),
       new ScatterplotLayer({
         id: "nearest",
         data: [nearest],
@@ -332,24 +323,6 @@ function buildLayers(search, visibility, boundaryLayers, outage) {
         getLineWidth: 4,
         lineWidthUnits: "pixels",
         getRadius: 14,
-        radiusUnits: "pixels",
-      }),
-    );
-  }
-  // Keep the searched-address marker even when the area is not covered.
-  if (search) {
-    const { address } = search;
-    layers.push(
-      new ScatterplotLayer({
-        id: "address",
-        data: [address],
-        getPosition: (a) => [a.lng, a.lat],
-        getFillColor: ADDRESS_COLOR,
-        getLineColor: OUTLINE_COLOR,
-        stroked: true,
-        getLineWidth: 2,
-        lineWidthUnits: "pixels",
-        getRadius: 7,
         radiusUnits: "pixels",
       }),
     );
