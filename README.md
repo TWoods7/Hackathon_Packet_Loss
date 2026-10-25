@@ -1,193 +1,215 @@
 # Packet Loss
 
-Packet Loss's **Chat AEP** is a HackOHIO 2026 outage-concierge prototype built with JavaScript, Vite, Google Maps, and deck.gl. It displays customer locations, estimates outage areas from the challenge's damage and network data, and lets users look up an address near the service area in southwest Virginia.
+Packet Loss's **Chat AEP** is a HackOHIO 2026 outage-concierge prototype built with JavaScript, Vite, Google Maps, and deck.gl. It combines a storm scenario map with an assistant that explains simulated outage risk, repair assumptions, preparation, and alert eligibility for a selected location in southwest Virginia.
 
-**A fresh clone includes the data needed to run the current map.** You need Node.js, npm, and a Google Maps API key. You do not need QGIS, another developer's QGIS project, or a local `data/extracted/` directory to run the app.
+**A fresh clone includes the JSON needed to run the current map and storm simulation.** You need Node.js, npm, and a Google Maps API key. The chatbot also needs a server-side Anthropic API key. QGIS and locally extracted GIS data are needed only when rebuilding the datasets.
 
 ## Current features
 
-- Customer markers grouped by overhead, underground, and unknown service, with a separate life-support layer.
-- Simulated customers without power and unrepaired-damage markers.
-- Clickable outage boundaries with affected-customer counts, damage summaries, and estimated repair effort in crew-hours.
-- Address search that highlights the nearest customer node and describes its simulated power status.
-- An Outage Assistant chatbot (Claude Sonnet 5.5 with tool calls). Searching an address, street, or area switches to a full-page chat with a short summary, where you can ask follow-up questions. A large **Back to map** button (or the browser's Back button) returns to the map. It searches your address, forecasts outage risk, estimates a restoration range, checks alert eligibility, drafts notifications, and can move the map's storm slider. See [Outage Assistant](#outage-assistant).
+- A storm-severity slider that generates repeatable damage and outage scenarios.
+- Forecast hexagons showing expected hours without power across possible outcomes.
+- Simulated damage markers and approximate outage circles, with affected-customer counts, repair-work totals, and upstream-dependent restoration steps.
+- Address search that matches the nearest customer node and refreshes its simulated status as severity changes.
+- An assistant that can change severity, read the same active scenario, explain risk, estimate repair ranges, evaluate alert eligibility, and draft customer notifications.
 
-Outages come from the supplied damage snapshot, not a live utility feed. Repair effort is a labor estimate, not a promised restoration time. Address search uses the nearest customer as a proxy; it does not verify that an address belongs to that service account.
+All outage results are model outputs, not live utility information. Address matching uses a nearby customer node as a proxy, not a verified service-account match. Repair ranges use labor and queue assumptions and are not official restoration deadlines or validated confidence intervals. The app drafts notifications; it does not send them.
 
 ## Run after cloning
 
-### 1. Clone and install dependencies
+### 1. Install dependencies
 
-Install Git and Node.js with npm. Node 24 was used for local development. Run these commands in a terminal:
+Install Git and Node.js with npm. Node 24 was used for development. Run these commands in a terminal:
 
 ```sh
-# Download the project and enter its root directory.
+# Clone the repository and enter its root directory.
 git clone https://github.com/TWoods7/Hackathon_Packet_Loss.git
 cd Hackathon_Packet_Loss
 
-# Check that Node and npm are available, then install the locked dependencies.
+# Confirm the tools are available and install the locked dependencies.
 node --version
 npm --version
 npm ci
 ```
 
-If you have already cloned the repository, start from its root directory and run `npm ci`. On Windows PowerShell, use `npm.cmd` in place of `npm` if PowerShell blocks `npm.ps1`.
+If already cloned, run `npm ci` from the root. Repeat it after pulling dependency changes. In Windows PowerShell, use `npm.cmd` if PowerShell blocks `npm.ps1`. Stop this project's dev/preview server before reinstalling dependencies if Windows reports file locks.
 
-### 2. Configure Google Maps
+### 2. Configure local keys
 
-Create a `.env` file in the repository root by copying `.env.example`.
-
-PowerShell:
+Copy `.env.example` to `.env` in the repository root. On a fresh clone, use PowerShell:
 
 ```powershell
-# Create a local configuration file on a fresh clone.
+# Create the local configuration file.
 Copy-Item .env.example .env
 ```
 
-macOS/Linux:
-
-```sh
-# Create a local configuration file on a fresh clone.
-cp .env.example .env
-```
-
-Edit `.env` and replace the placeholder:
+On macOS/Linux, use `cp .env.example .env`. Edit the new file:
 
 ```dotenv
-# Browser API key used to load Google Maps and search addresses.
+# Browser credential for the map and address geocoding.
 VITE_GOOGLE_MAPS_API_KEY=your_actual_google_maps_key
+
+# Server-only credential for the assistant; keep the name without VITE_.
+ANTHROPIC_API_KEY=your_actual_anthropic_key
 ```
 
-Use a Google Cloud project with the **Maps JavaScript API** and **Geocoding API** enabled. Follow Google's [Maps setup guide](https://developers.google.com/maps/documentation/javascript/get-api-key) and [Geocoding setup guide](https://developers.google.com/maps/documentation/javascript/geocoding) for account, billing, and API configuration. Configure website restrictions for your development URL, such as `http://localhost:5173/*`, and your deployment URL when applicable.
+Enable **Maps JavaScript API** and **Geocoding API** in the Google Cloud project. Follow Google's [Maps setup guide](https://developers.google.com/maps/documentation/javascript/get-api-key) and [Geocoding setup guide](https://developers.google.com/maps/documentation/javascript/geocoding) for account, billing, and API setup. Allow the development origin, such as `http://localhost:5173/*`, in the key's website restrictions and add the deployment origin when needed.
 
-`.env` is ignored by Git, so each teammate must configure it locally. Vite includes `VITE_` variables in browser code; this Maps key is a browser credential. Keep server-side secrets out of these variables.
-
-To enable the chatbot, also set a server-only Anthropic API key in `.env`:
-
-```dotenv
-# Used only by the dev server's /api/chat route; no VITE_ prefix, so it never reaches the browser.
-ANTHROPIC_API_KEY=your_anthropic_key
-```
+`.env` is ignored by Git; teammates configure it locally. Vite includes `VITE_` variables in browser code, so server credentials must not use that prefix. The Anthropic key is read by the local dev/preview server. The map can run without a working chatbot key, but chat requests will fail until it is configured. The assistant's model is configured in `server/prompt.js`.
 
 ### 3. Start the app
 
 ```sh
-# Start Vite's local development server.
+# Run the development server.
 npm run dev
 ```
 
-Open the URL printed by Vite, normally `http://localhost:5173/`. The app is a single page: the map, and the chat that opens when you search a location.
+Open the printed URL, normally `http://localhost:5173/`. Vite may choose another port if 5173 is occupied; allow that origin in the Maps key settings too. The app is one page containing the map and a chat view that opens over it when a location is searched.
 
-If port 5173 is occupied, Vite may choose another port. Use the printed URL and allow that origin in the Maps key's website restrictions.
+The storm starts at **0%**, generating no new simulated damage or outages. Move the slider to generate an outcome. **Area without power** starts enabled; enable **Damaged equipment** to see generated damage markers. After searching, **Nearest to you** shows the address-to-node connection. Click an outage circle for details. Use **Back to map** to return from chat.
 
-On the map, legend checkboxes start unchecked. Enable **Overhead**, **Underground**, **Unknown**, **Life support**, **No power**, or **Damaged equipment** to show those markers. Outage boundaries are displayed independently of these checkboxes. Click a boundary for its details. After searching an address, enable **Nearest to you** to show the address-to-customer connection.
+Restart Vite after changing `.env` or the server prompt. Start a fresh conversation when checking revised prompt behavior.
 
-Restart the development server after changing `.env`.
+## Commands and production builds
 
-## Outage Assistant
-
-Searching a location opens the full-page chat view (`map.js` fires a `location-searched` event that `chatbot.js` turns into a summary request). The chat covers the map instead of replacing it, so the map stays loaded and the assistant's tools keep working on it. It talks to `/api/chat`, a route the Vite dev and preview servers add (`server/chat.js`). The server adds the system prompt and tool definitions (`server/prompt.js`) and relays one turn at a time to Claude. When Claude calls a tool, the browser runs it against the live map state (`src/assistantTools.js`), then sends the result back. This means the chat and the map always agree.
-
-- **Prompting:** the system prompt holds the rules, the alert rules, the message templates, and one worked example that walks through the steps (look up the address, set the storm, get the risk, get the range) before the answer. Claude ends each prediction with a plain-language `<explanation>` of the data and assumptions behind it, which the chat shows collapsed under "How I got this". Claude's own thinking stays internal: asking it to print its reasoning trips the API's `reasoning_extraction` safety check.
-- **Tools:** `search_address`, `get_current_status`, `set_storm_severity`, `get_outage_risk`, `estimate_restoration` (crews and access are scenario inputs), and `check_alert_eligibility`. All numbers come from `src/restorationModel.js`.
-- **Privacy and safety:** tool results never include premise IDs, coordinates, device IDs, or life-support flags. The server accepts only user and assistant turns, so the browser can't change the system prompt. The server log records tool names and token counts, never message text. Low-confidence locations get an explicit fallback message.
-
-`npm run build` output has no `/api/chat` route. Use `npm run preview` (or add a small Node server) to keep the chatbot working after a build.
-
-## Available commands
-
-Run commands from the repository root.
+Run commands from the repository root. None of the application commands rebuild GIS data.
 
 | Command | Purpose | Requires extracted working data? |
 |---|---|---|
 | `npm ci` | Install dependencies from `package-lock.json` | No |
-| `npm run dev` | Run the development server | No |
-| `npm run build` | Build both HTML pages into `dist/` | No |
-| `npm run preview` | Serve the existing production build locally | No |
-| `npm run data:customers -- "path/to/Customer_Clip"` | Replace the private full customer file `data/extracted/customers.json` from a shapefile basename, without `.shp`; run `npm run data:grid` afterwards to refresh the public files | Yes: customer source files |
-| `npm run data:grid` | Replace the browser outage grid from working GIS/network files | Yes |
-
-To check the production build:
+| `npm run dev` | Run Vite with the `/api/chat` route | No |
+| `npm run build` | Compile the app page and copy public assets into `dist/` | No |
+| `npm run preview` | Serve the existing build with the local chat route | No |
+| `npm run data:customers -- "path/to/Customer_Clip"` | Replace the private customer JSON from a shapefile basename without `.shp` | Yes: customer source files |
+| `npm run data:grid` | Rebuild the public grid and aligned public customer locations | Yes |
 
 ```sh
-# Compile the app, then serve the generated files locally.
+# Build the app, then serve the generated output locally.
 npm run build
 npm run preview
 ```
 
-Open the preview URL printed in the terminal. The Maps key must allow that origin too. The key is read when building, so changing it requires another build. The project has no automated test command configured.
+Use the preview URL printed by Vite and allow that origin in the Maps key settings. Browser configuration is read at build time; rebuild after changing it. Static hosting of `dist/` alone does not provide `/api/chat`: deployed chat requires a server route equivalent to `server/chat.js`. The project has no automated test command configured.
 
 ## Project layout
 
 ```text
-.env.example                  Maps configuration template
-AGENTS.md                     Rules for coding agents (Codex, Claude): data privacy and file alignment
-index.html                    The app page: map, search, legend, storm slider, and chat markup
+.env.example                  Local configuration template
+AGENTS.md                     Data privacy, alignment, and model rules
+index.html                    Map, search, legend, storm slider, and chat
 src/
-  map.js                      Map layers, address search, and outage panels
-  outages.js                  Grid loader and outage calculations
-  chatbot.js                  Chat panel with placeholder replies
+  map.js                      Scenario state, rendering, search, and map API
+  outages.js                  Grid loading, forecasts, and customer impact
+  stormSimulation.js          Seeded sampling of candidate failures
+  stormScenario.js            One complete sampled scenario and work totals
+  restorationModel.js         Failure-probability and repair-time formulas
+  hexGrid.js                  Privacy-aware aggregation into forecast hexagons
+  assistantTools.js           Assistant tools reading the active map scenario
+  chatbot.js                  Chat view and server/tool request loop
   style.css                   Shared styling and map colors
-public/data/                  Tracked files served at /data/...
+server/
+  chat.js                     Server-side Anthropic request middleware
+  prompt.js                   Model selection, instructions, and tool schemas
+public/data/                  Tracked browser datasets, served at /data/...
 scripts/
-  boundingAlgorithm.js        Convex-hull boundary layers used by the map
-  dataBuildScripts/           Customer, GIS, relationship, and grid builders
-vite.config.js                Build configuration for both HTML pages
+  boundingAlgorithm.js        Geometry utility retained from earlier map work
+  dataBuildScripts/           GIS, customer, relationship, and grid builders
+vite.config.js                App build and dev/preview chat middleware
 ```
 
-There is currently no backend server or hosted database. Data is stored as JSON and GeoJSON files.
+Data is stored as JSON and GeoJSON files rather than a hosted database. The local Vite server supplies the assistant API middleware.
 
 ## Data included in a clone
 
-| Tracked file | Role in the current project |
+| Tracked file | Role |
 |---|---|
-| `public/data/customers.json` | Customer locations only (`lng`, `lat`, rounded to about 11 m); loaded by the map. Written by `npm run data:grid` |
-| `public/data/grid.json` | Devices, customer device chains, damage, and simulation candidates; loaded by the map |
-| `public/data/labor.json` | Labor reference values and team repair recipes; used when rebuilding the grid |
-| `public/data/hospitals.geojson` | Hospital export; the current map does not load a hospital layer |
+| `public/data/customers.json` | Customer longitude/latitude rounded to four decimal places, in grid row order |
+| `public/data/grid.json` | Devices, customer chains, failure candidates, labor inputs, historical damage, and calibration metadata |
+| `public/data/labor.json` | Labor reference values, indirect multiplier, and team repair recipes |
+| `public/data/hospitals.geojson` | Hospital export; not loaded as a layer by the current map |
 
-The current snapshot contains 117,642 customer rows. The grid contains a device chain entry for each row, including an empty chain when upstream data is missing.
+The current snapshot has 117,642 customer rows. `grid.customerChains[i]` belongs to `customers.rows[i]`; an empty chain means missing upstream data. **Keep the public customer and grid files from the same build together.** `npm run data:grid` writes both from the full private customer file.
 
-Git does **not** include `.env`, `node_modules/`, `dist/`, or `data/extracted/`. The original QGIS project and organizer source package are also not bundled with this repository. Missing extracted files do not prevent the committed map data from loading.
+Git excludes `.env`, `node_modules/`, `dist/`, and `data/extracted/`. The original QGIS project and source package are not bundled. Their absence does not prevent the committed map and simulation from running.
 
-Files in `public/` are downloadable by anyone who can access the running application, so they hold only what the map needs. The public customer file has rounded locations and nothing else: premise identifiers, transformer references, circuit IDs, street names, and life-support flags stay in the full file at `data/extracted/customers.json`, which Git ignores and the build scripts read. Map popups and panels don't show circuit IDs. Earlier commits did include the full customer file, so it remains in the repository's Git history.
+Everything under `public/` is downloadable. The full customer attributes stay in ignored `data/extracted/customers.json`; the public customer copy contains only rounded coordinates. Device coordinates are omitted from the public grid. The grid still contains the network model and candidate/damage geometry used by the app. Popups and assistant tool results omit internal identifiers. Earlier commits contained full customer data, which remains in Git history. Follow `AGENTS.md` when changing exports or UI fields.
 
-## How the map uses the data
+## How the simulation works
 
-`src/map.js` fetches `/data/customers.json`. `src/outages.js` fetches `/data/grid.json`. Vite serves those URLs from `public/data/` during development and copies the files into the production build.
+`src/map.js` fetches `/data/customers.json`, and `loadGrid()` in `src/outages.js` fetches `/data/grid.json`. Compact tables use `{ fields, rows }`; the loader reconstructs device and historical-damage objects by field name. Vite serves these files during development and includes them in the build.
 
-Customer, device, and damage tables use a compact `{ fields, rows }` format: the field at position `i` names the value at position `i` in each row. The loaders convert these rows into objects.
+The active flow is:
 
-**Customer ordering must stay synchronized:** `grid.customerChains[i]` belongs to `customers.rows[i]`. `npm run data:grid` writes both public files from the same full customer file, so they stay aligned. If you regenerate, filter, or reorder the full customer file, rerun it and commit both files together. Replacing only one can associate outages with the wrong locations.
+1. `prepareForecast(grid)` calculates customer exposure once.
+2. `stormForecast()` converts severity into failure probabilities and expected outage hours. At 100%, the model targets the historical reference window's damage count in expectation; the slider is not wind speed or a customer's outage probability.
+3. `simulateStormDamage()` compares each candidate probability with a seeded random draw. The map uses seed **2026**. Reusing the seed and dataset produces the same outcome, and raising severity retains existing failures while adding others. Reordering or rebuilding candidates can change the outcome.
+4. `buildStormScenario()` traces generated failures through protective-device chains, groups customers under their most upstream tripped device, and totals repair work. Multiple repairs affecting one device remain separate repair records.
+5. `map.js` updates circles, markers, counts, and an existing address result. It refreshes the shared customer-to-outage lookup so assistant tools read the same scenario.
 
-For the simulation, unrepaired damage trips associated devices. A customer is marked without power when a device in its upstream chain is tripped. Customers are grouped under their most upstream tripped device, and the map draws a convex hull around each group's locations. Very small groups may have no polygon. These hulls are visual summaries, not surveyed electrical-service boundaries.
+The original historical damage records remain in `grid.damages`; the current map displays newly generated damage instead. The active simulation does not add those historical unrepaired records as a baseline at 0%.
 
-Crew-hours are calculated from damage labor recipes and the indirect labor multiplier. They do not account for a complete crew schedule, resource availability, or an actual restoration deadline. Some damage-to-network links use spatial fallbacks; `grid.json` retains a `traceMethod` for inspecting those assumptions.
+**Read the two map views separately:** forecast hexagons show expected hours across possible outcomes; purple circles and damage markers show one sampled outcome. A location may have positive forecast risk and no outage in that sample.
 
-**Restoration order (upstream dependencies and step restoration).** Power can't return past a damaged device until every damaged device between it and the substation is repaired. For each current outage, `restorationOrder` in `src/restorationModel.js` orders the repairs: a repair is ready once everything upstream of it is fixed, and among ready repairs, the one serving the most customers per hour of work goes first. One crew works through them in turn, so each step has a time and a count of customers it brings back. The outage panel lists the steps, the address search says which step restores that location, and the assistant explains it.
+Circles summarize geographic spread, not outage probability or damage density. Their centers are coarsened, their minimum radius is 300 m, and their radius covers the farthest affected customer plus 100 m. A distant customer can make a circle large; unaffected locations may lie inside it. Use the selected location's network-based tool result, not apparent circle inclusion, to determine its simulated status.
 
-For the storm forecast, crews are assumed to fix repairs that restore the most customers first. Each home's place in that queue comes from the last at-risk device on its line (fewer customers behind it = later), and its expected hours without power are its own repair plus that share of the storm backlog. The assistant also reports how many repairs are likely on the home's line if it loses power. Separate crews work those in parallel, so the count explains the estimate but doesn't add to it.
+Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies and then prioritizes ready repairs by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever severity changes.
 
-When adding features in a module under `src/`, reuse the outage functions:
+Step times describe elapsed work after the area's crew starts, with normal access. The assistant's planning range additionally considers declared access allowances and waiting for work elsewhere in the storm. It excludes the area's own labor from that outside backlog to avoid double counting. Crew count can change the modeled wait while the area's baseline one-crew sequence stays the same. `restorationRange()` and `sampledRestorationRange()` in `restorationModel.js` contain the duration formulas.
+
+Hypothetical forecasts use expected work and the selected location's assumed repair-queue position. If no outage was generated at the selected location, the active-sample tool supplies no restoration duration. A request for another severity returns a hypothetical forecast without moving the map. These are simplified scheduling assumptions, not a full dispatch optimizer or calibrated confidence intervals.
+
+Use the same scenario helper when adding a module under `src/`:
 
 ```js
-// Import the existing grid loader and simulation helpers.
-import { loadGrid, trippedDevices, computeOutages } from "./outages.js";
+// Import the committed-grid loader and reusable scenario functions.
+import { loadGrid, prepareForecast } from "./outages.js";
+import { buildStormScenario } from "./stormScenario.js";
 
-// Load the committed browser grid and unpack its tables.
+// Load and unpack the browser dataset.
 const grid = await loadGrid();
 
-// Identify devices associated with the snapshot's unrepaired damage.
-const tripped = trippedDevices(grid.damages);
+// Prepare exposure once for subsequent severity changes.
+const prepared = prepareForecast(grid);
 
-// Calculate customer power masks and outage groups using the same model as the map.
-const result = computeOutages(grid, tripped, grid.damages);
+// Generate a 50% storm using the map's default seed.
+const scenario = buildStormScenario(grid, prepared, 0.5, 2026);
 
-// Customer indices in these groups refer to customers.json row positions.
-console.log(result.zones.length);
+// Read safe aggregate results for this sampled outcome.
+console.log(scenario.summary);
 ```
 
-Browser modules use `fetch()` for served data. Node build scripts can read local working files with `node:fs`. The app does not currently load the normalized asset catalog under `data/extracted/normalized/`; creating that catalog alone does not add a map layer.
+Browser code uses `fetch()`; Node build scripts use local file readers. The normalized catalog under `data/extracted/normalized/` is not automatically served or displayed. Some network associations use spatial fallbacks, and historical weights and storm-window calibration are prototype assumptions rather than a validated weather-to-damage model.
+
+## Outage Assistant
+
+Searching a location opens the chat view over the loaded map. The browser posts conversation turns to `/api/chat`; `server/chat.js` adds the server-owned prompt and tool definitions and calls Anthropic. Tool requests execute in `src/assistantTools.js` against the active map state, and the browser returns their results for the next assistant turn.
+
+- `search_address` selects a nearby service node. `get_current_status` describes its sampled outage status, not its real electricity supply.
+- `set_storm_severity` updates the map and returns forecast expectations plus a separate sampled-outcome summary.
+- `get_outage_risk` reports forecast risk. `estimate_restoration` reports an assumption-based range when available and supports crew/access inputs.
+- `check_alert_eligibility` applies documented challenge rules and declared needs. The assistant can draft a message; it does not enroll or notify anyone.
+
+The prompt requires fresh tool reads for follow-up predictions, separation of sampled outcomes and expectations, and a fallback for unreliable matches. Customer-facing explanations appear under "How I got this". Tool results exclude premise IDs, coordinates, device IDs, circuit IDs, and life-support flags. Needs are declared by the customer rather than inferred from private records.
+
+## Demonstration and review
+
+Use the committed grid and seed 2026 for these reference counts:
+
+| Severity | Sampled damage locations | Customers without power | Outage areas |
+|---|---:|---:|---:|
+| 0% | 0 | 0 | 0 |
+| 50% | 427 | 30,456 | 113 |
+| 100% | 891 | 46,845 | 148 |
+
+Counts can change with the dataset or seed. Expected forecast counts need not equal sampled counts. To demonstrate an adjustable scenario:
+
+1. Start at 0%, then show 50% and 100%. Return to 50% to show repeatability.
+2. Select a team-approved location with usable network data. Change severity and confirm that map counts, selected-location status, and fresh assistant tool responses agree.
+3. Ask the assistant to change severity. Return to the map to show that the same scenario changed.
+4. Compare the selected location's restoration step in the search result and assistant response. Ask for more crews or restricted access: repair estimates can change while sampled damage stays unchanged. Step times start when the area's crew begins; the range may also include waiting elsewhere.
+5. Ask for alert eligibility and a draft pre-storm notification. Explain the rules and show the draft without claiming it was sent.
+6. Ask whether the app can confirm real power status. It should explain the simulation limitation. An unreliable location match should trigger the documented fallback.
+
+The severity comparison demonstrates an adjustable scenario input. Review the challenge's other customer-journey requirements separately before claiming the whole submission is complete.
 
 ## Optional: change or rebuild the datasets
 
@@ -196,10 +218,11 @@ Browser modules use `fetch()` for served data. Node build scripts can read local
 > If a data script fails with `ENOENT ... data/extracted/customers.json`, or complains that a field such as `premise` or `transformer` is missing, restore the full file from Git history (the last commit that had it), then rerun the script:
 >
 > ```sh
-> # Recreate the private full customer file from before the privacy change.
-> mkdir -p data/extracted
-> git show a3a4575:public/data/customers.json > data/extracted/customers.json
+> # Restore the private file without printing its contents or changing encoding.
+> node --input-type=module -e "import {execFileSync} from 'node:child_process'; import {mkdirSync,writeFileSync} from 'node:fs'; mkdirSync('data/extracted',{recursive:true}); writeFileSync('data/extracted/customers.json',execFileSync('git',['show','a3a4575:public/data/customers.json'],{maxBuffer:32*1024*1024}));"
 > ```
+>
+> The Node command preserves the original bytes on Windows and other platforms; shell redirection in older PowerShell can otherwise write an unsuitable encoding.
 >
 > Never copy the full file back into `public/data/`. Don't add premise, transformer, circuit, street, or life-support fields to anything under `public/`, or show circuit IDs in the map UI.
 
@@ -233,7 +256,7 @@ Use the customer snapshot that matches those working files. Once the inputs are 
 npm run data:grid
 ```
 
-This command can use substantial memory; the package script allows Node up to 8 GiB of heap. It overwrites `public/data/grid.json`. Review the resulting change before committing it.
+This command can use substantial memory; the package script allows Node up to 8 GiB of heap. It overwrites both `public/data/grid.json` and `public/data/customers.json`. Review and commit the aligned pair together.
 
 If changing the customer source, the customer builder reads `.shp` and `.dbf` files from the supplied basename. It reads coordinates directly, so the input must already use longitude/latitude. It does not reproject coordinates. Regenerate the grid after changing customers.
 
@@ -280,13 +303,13 @@ Working outputs remain ignored under `data/extracted/`. Share approved updates t
 
 | Symptom | What to check |
 |---|---|
-| `node` or `npm` is not recognized | Install Node.js with npm, reopen the terminal, and check `node --version`. On Windows, confirm the Node installation directory is on PATH. |
-| PowerShell blocks `npm.ps1` | Use `npm.cmd ci` or `npm.cmd run dev`; changing script policy is unnecessary. |
-| Missing Google Maps key message | Set `VITE_GOOGLE_MAPS_API_KEY` in root `.env`, then restart Vite. |
-| Google Maps authorization or address-search errors | Check the browser console, enabled APIs, key restrictions, and Google Cloud account configuration. |
-| Map loads but customer or damage markers are absent | Enable the corresponding legend checkboxes; they start unchecked. |
-| Missing `customers.json` or `grid.json` | Restore the tracked files in `public/data/` from the intended branch/commit. Rebuilding requires the additional inputs above, including `data/extracted/customers.json`. |
-| `ENOENT` while running a data script | Run it from the repository root and check that its extracted input files have been restored. For `data/extracted/customers.json`, see the data layout note in [Optional: change or rebuild the datasets](#optional-change-or-rebuild-the-datasets). |
-| A data script says `premise`, `transformer`, or `circuitId` is missing | It is reading the slim public customer file. Data scripts must read `data/extracted/customers.json`; restore it with `git show a3a4575:public/data/customers.json > data/extracted/customers.json`. |
-| `npm ci` fails with Windows file-lock errors | Stop this project's dev/preview server with Ctrl+C, then retry. |
-| Chat replies say the assistant is not connected | Expected: `src/chatbot.js` currently returns a placeholder reply. |
+| `node` or `npm` is not recognized | Install Node.js with npm, reopen the terminal, and check PATH. |
+| PowerShell blocks `npm.ps1` | Use `npm.cmd ci` or `npm.cmd run dev`. |
+| Missing Google Maps key or map authorization errors | Check root `.env`, enabled APIs, allowed origin, and restart/rebuild as appropriate. |
+| No outage circles or damage markers | At 0% there is no generated damage; increase severity and enable the matching legend checkbox. |
+| Missing `@anthropic-ai/sdk` during build | Run `npm.cmd ci` after pulling dependency changes, then retry the build. |
+| Chat says it is not configured | Set the server-only `ANTHROPIC_API_KEY`, restart Vite, and begin a fresh conversation. |
+| Chat route missing on static hosting | Provide the server middleware or use local Vite dev/preview; `dist/` alone has no API route. |
+| Missing public customer/grid JSON | Restore the tracked pair from the intended build; a rebuild needs the optional pipeline inputs. |
+| Data script reports missing private customers or missing premise fields | Restore `data/extracted/customers.json` as described in the optional pipeline section; never point data scripts at the slim public copy. |
+| Windows file-lock errors during dependency installation | Stop this project's dev/preview server with Ctrl+C before retrying. |
