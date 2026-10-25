@@ -10,7 +10,7 @@ async function readJson(path) {
 }
 
 // Load the three datasets already checked by our validation scripts.
-const customers = await readJson("public/data/customers.json");
+const customers = await readJson("data/extracted/customers.json");
 const upstream = await readJson("data/extracted/upstream-by-premise.json");
 const transformers = await readJson("data/extracted/transformers.geojson");
 

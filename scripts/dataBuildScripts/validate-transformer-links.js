@@ -9,7 +9,7 @@ import { readFile, writeFile } from "node:fs/promises";
 // "await" waits for the file read; JSON.parse interprets its JSON contents.
 // customers.fields contains column names; customers.rows contains value arrays.
 const customers = JSON.parse(
-  await readFile("public/data/customers.json", "utf8"),
+  await readFile("data/extracted/customers.json", "utf8"),
 );
 
 // Read the QGIS export. Each feature contains geometry and a properties object.

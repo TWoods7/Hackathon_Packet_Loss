@@ -150,7 +150,6 @@ function damageInfoHtml(d) {
     <div class="info">
       <strong>${d.damageType ?? "Damage"}</strong>
       <div>Asset: ${d.assetType}</div>
-      <div>Circuit: ${d.circuit ?? "Unknown"}</div>
       <div>Reported: ${d.reported ?? "Unknown"}</div>
       <div>Not yet repaired</div>
     </div>`;
@@ -164,10 +163,10 @@ function damageSummary(damages) {
 }
 
 // Title and multi-line text for an outage's side panel.
-// Life-support counts stay out: in a small outage they could identify a household.
+// Life-support counts and circuit IDs stay out: they are internal or could identify a household.
 function outageDetails(zone, device) {
   return {
-    title: `Outage: ${device.type} on ${device.circuit ?? "unknown circuit"}`,
+    title: `Outage: ${device.type.toLowerCase()} tripped`,
     text: [
       `${zone.customers.length.toLocaleString()} customers without power`,
       `Cause: ${damageSummary(zone.damages)}`,
@@ -540,7 +539,7 @@ async function initMap() {
     const zone = zoneByCustomer.get(customer.index);
     if (!zone) return "Power on: no reported damage upstream of this location.";
     const device = grid.devices[zone.device];
-    return `No power: inside a ${device.type.toLowerCase()} outage on ${device.circuit ?? "an unknown circuit"} ` +
+    return `No power: inside a ${device.type.toLowerCase()} outage ` +
       `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} crew-hours of repair.`;
   };
 

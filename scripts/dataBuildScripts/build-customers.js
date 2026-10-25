@@ -10,7 +10,7 @@ import { writeFile } from "node:fs/promises";
 import { open } from "shapefile";
 
 const base = process.argv[2] ?? "data/extracted/Data1/Customer_Clip";
-const outPath = "public/data/customers.json";
+const outPath = "data/extracted/customers.json";
 
 // Overhead / Underground / Unknown service
 const KIND = { Overhead: 0, Underground: 1 };

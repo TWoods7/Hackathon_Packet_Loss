@@ -1,7 +1,8 @@
 // Build the browser-facing outage grid used by the map's outage masks.
 // Run from the project root after the database scripts have built data/extracted/:
 //   npm run data:grid
-// Output: public/data/grid.json (no premise IDs or raw source IDs).
+// Output: public/data/grid.json (no premise IDs or raw source IDs) and
+// public/data/customers.json (rounded locations only, aligned with customerChains).
 
 // Import Node's built-in asynchronous file functions.
 import { readFile, writeFile } from "node:fs/promises";
@@ -24,7 +25,7 @@ const primary = await readJson("data/extracted/primary-lines.geojson");
 const secondary = await readJson("data/extracted/secondary-lines.geojson");
 const damage = await readJson("data/extracted/damage.geojson");
 const crosswalk = await readJson("data/extracted/recloser-crosswalk.json");
-const customers = await readJson("public/data/customers.json");
+const customers = await readJson("data/extracted/customers.json");
 const labor = await readJson("public/data/labor.json");
 
 // Normalize lookup values while preserving identifiers as text.
@@ -542,6 +543,17 @@ const outputPath = "public/data/grid.json";
 const text = JSON.stringify(output) + "\n";
 await writeFile(outputPath, text);
 
+// The browser's customer file: rounded locations only, in the same row order as
+// customerChains, so the two public files always come from the same build.
+// Premise, transformer, circuit, street, and life-support fields stay in data/extracted/.
+const publicCustomersPath = "public/data/customers.json";
+const lngColumn = customers.fields.indexOf("lng");
+const latColumn = customers.fields.indexOf("lat");
+await writeFile(publicCustomersPath, JSON.stringify({
+  fields: ["lng", "lat"],
+  rows: customers.rows.map((row) => [round(row[lngColumn], 4), round(row[latColumn], 4)]),
+}));
+
 // Print the counts that matter for checking the result.
 const tripped = new Set(damageRows.map((r) => r[6]).filter((d) => d != null));
 const noPower = customerChains.filter((chain) => chain.some((i) => tripped.has(i))).length;
@@ -562,4 +574,4 @@ console.table({
   fileMegabytes: Math.round(text.length / 1e5) / 10,
 });
 console.table(methodCounts);
-console.log(`Saved outage grid to ${outputPath}`);
+console.log(`Saved outage grid to ${outputPath} and customer locations to ${publicCustomersPath}`);

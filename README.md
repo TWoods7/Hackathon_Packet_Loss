@@ -104,7 +104,7 @@ Run commands from the repository root.
 | `npm run dev` | Run the development server | No |
 | `npm run build` | Build both HTML pages into `dist/` | No |
 | `npm run preview` | Serve the existing production build locally | No |
-| `npm run data:customers -- "path/to/Customer_Clip"` | Replace the customer JSON from a shapefile basename, without `.shp` | Yes: customer source files |
+| `npm run data:customers -- "path/to/Customer_Clip"` | Replace the private full customer file `data/extracted/customers.json` from a shapefile basename, without `.shp`; run `npm run data:grid` afterwards to refresh the public files | Yes: customer source files |
 | `npm run data:grid` | Replace the browser outage grid from working GIS/network files | Yes |
 
 To check the production build:
@@ -121,6 +121,7 @@ Open the preview URL printed in the terminal. The Maps key must allow that origi
 
 ```text
 .env.example                  Maps configuration template
+AGENTS.md                     Rules for coding agents (Codex, Claude): data privacy and file alignment
 index.html                    The app page: map, search, legend, storm slider, and chat markup
 src/
   map.js                      Map layers, address search, and outage panels
@@ -140,18 +141,16 @@ There is currently no backend server or hosted database. Data is stored as JSON 
 
 | Tracked file | Role in the current project |
 |---|---|
-| `public/data/customers.json` | Customer locations, service categories, and source references; loaded by the map |
+| `public/data/customers.json` | Customer locations only (`lng`, `lat`, rounded to about 11 m); loaded by the map. Written by `npm run data:grid` |
 | `public/data/grid.json` | Devices, customer device chains, damage, and simulation candidates; loaded by the map |
 | `public/data/labor.json` | Labor reference values and team repair recipes; used when rebuilding the grid |
 | `public/data/hospitals.geojson` | Hospital export; the current map does not load a hospital layer |
-| `public/data/hospitals.qmd` | QGIS metadata accompanying the hospital export |
-| `public/data/testData.js` | Sample boundary data; not imported by the current map |
 
 The current snapshot contains 117,642 customer rows. The grid contains a device chain entry for each row, including an empty chain when upstream data is missing.
 
 Git does **not** include `.env`, `node_modules/`, `dist/`, or `data/extracted/`. The original QGIS project and organizer source package are also not bundled with this repository. Missing extracted files do not prevent the committed map data from loading.
 
-Files in `public/` are downloadable by anyone who can access the running application. The current customer file includes premise identifiers, location information, transformer references, and life-support flags. The app is a team prototype; its current datasets and popups have not been reduced to an anonymized customer-facing export.
+Files in `public/` are downloadable by anyone who can access the running application, so they hold only what the map needs. The public customer file has rounded locations and nothing else: premise identifiers, transformer references, circuit IDs, street names, and life-support flags stay in the full file at `data/extracted/customers.json`, which Git ignores and the build scripts read. Map popups and panels don't show circuit IDs. Earlier commits did include the full customer file, so it remains in the repository's Git history.
 
 ## How the map uses the data
 
@@ -159,7 +158,7 @@ Files in `public/` are downloadable by anyone who can access the running applica
 
 Customer, device, and damage tables use a compact `{ fields, rows }` format: the field at position `i` names the value at position `i` in each row. The loaders convert these rows into objects.
 
-**Customer ordering must stay synchronized:** `grid.customerChains[i]` belongs to `customers.rows[i]`. If you regenerate, filter, or reorder the customer file, rebuild the grid and share both files together. Replacing only one can associate outages with the wrong locations.
+**Customer ordering must stay synchronized:** `grid.customerChains[i]` belongs to `customers.rows[i]`. `npm run data:grid` writes both public files from the same full customer file, so they stay aligned. If you regenerate, filter, or reorder the full customer file, rerun it and commit both files together. Replacing only one can associate outages with the wrong locations.
 
 For the simulation, unrepaired damage trips associated devices. A customer is marked without power when a device in its upstream chain is tripped. Customers are grouped under their most upstream tripped device, and the map draws a convex hull around each group's locations. Very small groups may have no polygon. These hulls are visual summaries, not surveyed electrical-service boundaries.
 
@@ -188,16 +187,29 @@ Browser modules use `fetch()` for served data. Node build scripts can read local
 
 ## Optional: change or rebuild the datasets
 
+> **Data layout change (privacy for the demo).** `public/data/customers.json` used to hold every customer field (premise, transformer, circuit, street, life support). It now holds only rounded `lng`/`lat`, because everything in `public/` can be downloaded from the running app. The full file moved to `data/extracted/customers.json` (ignored by Git), and every data script now reads it from there. `npm run data:grid` writes the slim public copy.
+>
+> If a data script fails with `ENOENT ... data/extracted/customers.json`, or complains that a field such as `premise` or `transformer` is missing, restore the full file from Git history (the last commit that had it), then rerun the script:
+>
+> ```sh
+> # Recreate the private full customer file from before the privacy change.
+> mkdir -p data/extracted
+> git show a3a4575:public/data/customers.json > data/extracted/customers.json
+> ```
+>
+> Never copy the full file back into `public/data/`. Don't add premise, transformer, circuit, street, or life-support fields to anything under `public/`, or show circuit IDs in the map UI.
+
 Skip this section to work on the current interface or map using the committed snapshot. `npm ci` and `npm run build` do not run the data pipeline.
 
 ### Use the team's extracted data
 
 Obtain the team's working-data copy through the agreed private sharing method. If it includes a manifest and verification instructions, verify the copy before using it. Restore its `data/extracted/` contents under this repository's root, preserving filenames and subdirectories. An already exported JSON/GeoJSON copy does not require access to another developer's QGIS installation.
 
-The grid builder needs these files, plus the tracked `public/data/customers.json` and `public/data/labor.json`:
+The grid builder needs these files, including the full `customers.json`, plus the tracked `public/data/labor.json`:
 
 ```text
 data/extracted/
+  customers.json
   upstream-by-premise.json
   recloser-crosswalk.json
   transformers.geojson
@@ -233,7 +245,7 @@ Create `data/extracted/` and export these prerequisites with all features and or
 | `Data2/Recloser_Bank_Clip` | `reclosers.geojson` | 331 |
 | `Data1/Fuse_Bank_Clip` | `fuses.geojson` | 7,616 |
 
-Copy the supplied upstream TXT to `data/extracted/matched_upstream.txt`. The tracked customer snapshot can be reused when it matches the same source package. Then run the pipeline from the repository root, stopping to resolve any failed command:
+Copy the supplied upstream TXT to `data/extracted/matched_upstream.txt`. Build the full customer file with `npm run data:customers` (or restore the team's `data/extracted/customers.json` from the same source package). Then run the pipeline from the repository root, stopping to resolve any failed command:
 
 ```sh
 # Export the seven remaining GIS layers and validate their counts.
@@ -269,7 +281,8 @@ Working outputs remain ignored under `data/extracted/`. Share approved updates t
 | Missing Google Maps key message | Set `VITE_GOOGLE_MAPS_API_KEY` in root `.env`, then restart Vite. |
 | Google Maps authorization or address-search errors | Check the browser console, enabled APIs, key restrictions, and Google Cloud account configuration. |
 | Map loads but customer or damage markers are absent | Enable the corresponding legend checkboxes; they start unchecked. |
-| Missing `customers.json` or `grid.json` | Restore the tracked files from the intended branch/commit. Rebuilding requires the additional inputs above. |
-| `ENOENT` while running a data script | Run it from the repository root and check that its extracted input files have been restored. |
+| Missing `customers.json` or `grid.json` | Restore the tracked files in `public/data/` from the intended branch/commit. Rebuilding requires the additional inputs above, including `data/extracted/customers.json`. |
+| `ENOENT` while running a data script | Run it from the repository root and check that its extracted input files have been restored. For `data/extracted/customers.json`, see the data layout note in [Optional: change or rebuild the datasets](#optional-change-or-rebuild-the-datasets). |
+| A data script says `premise`, `transformer`, or `circuitId` is missing | It is reading the slim public customer file. Data scripts must read `data/extracted/customers.json`; restore it with `git show a3a4575:public/data/customers.json > data/extracted/customers.json`. |
 | `npm ci` fails with Windows file-lock errors | Stop this project's dev/preview server with Ctrl+C, then retry. |
 | Chat replies say the assistant is not connected | Expected: `src/chatbot.js` currently returns a placeholder reply. |

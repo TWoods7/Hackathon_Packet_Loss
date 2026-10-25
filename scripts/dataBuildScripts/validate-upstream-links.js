@@ -6,7 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 
 // Load the customer table and generated upstream data.
 const customers = JSON.parse(
-  await readFile("public/data/customers.json", "utf8"),
+  await readFile("data/extracted/customers.json", "utf8"),
 );
 const upstream = JSON.parse(
   await readFile("data/extracted/upstream-by-premise.json", "utf8"),
