@@ -39,19 +39,25 @@
           </div>
         </div>
       </section>
+      <section class="storm-panel" aria-labelledby="storm-title">
+        <div class="storm-header">
+          <label id="storm-title" for="storm-severity">Storm severity</label>
+          <output id="storm-value" for="storm-severity">0%</output>
+        </div>
+        <input id="storm-severity" type="range" min="0" max="100" step="5" value="0" autocomplete="off" />
+        <div class="storm-scale"><span>Calm</span><span>Worst on record</span></div>
+        <p id="storm-summary" aria-live="polite"></p>
+        <div id="heat-legend" hidden>
+          <div class="heat-bar"></div>
+          <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
+        </div>
+        <p id="storm-assumptions" class="simulation-note"></p>
+      </section>
       <div class="legend">
-        <strong>Customers</strong>
+        <strong>Outages</strong>
         <div id="customer-count">Loading…</div>
-        <label><input type="checkbox" data-layer="overhead" autocomplete="off" /><span class="dot"
-            style="background: rgb(var(--map-overhead))"></span>Overhead</label>
-        <label><input type="checkbox" data-layer="underground" autocomplete="off" /><span class="dot"
-            style="background: rgb(var(--map-underground))"></span>Underground</label>
-        <label><input type="checkbox" data-layer="unknown" autocomplete="off" /><span class="dot"
-            style="background: rgb(var(--map-unknown))"></span>Unknown</label>
-        <label><input type="checkbox" data-layer="lifeSupport" autocomplete="off" /><span class="dot"
-            style="background: rgb(var(--map-life-support))"></span>Life support</label>
-        <label><input type="checkbox" data-layer="noPower" autocomplete="off" /><span class="dot"
-            style="background: rgb(var(--map-no-power))"></span>No power</label>
+        <div><span class="dot"
+            style="background: rgba(var(--map-hull-fill)); border: 2px solid rgb(var(--map-hull-outline))"></span>Area without power</div>
         <label><input type="checkbox" data-layer="damage" autocomplete="off" /><span class="dot ring"
             style="border-color: rgb(var(--map-damage))"></span>Damaged equipment</label>
         <label><input type="checkbox" data-layer="nearest" autocomplete="off" /><span class="dot ring"

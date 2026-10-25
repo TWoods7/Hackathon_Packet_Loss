@@ -14,13 +14,20 @@
   --map-address: 17, 17, 17;
   --map-outline: 255, 255, 255;
   --map-transparent: 0, 0, 0, 0;
-  --map-hull-fill: 220, 38, 38, 40;
-  --map-hull-selected-fill: 220, 38, 38, 75;
-  --map-hull-outline: 220, 38, 38;
+  /* Outage circles (customers without power). */
+  --map-hull-fill: 249, 115, 22, 70;
+  --map-hull-selected-fill: 249, 115, 22, 120;
+  --map-hull-outline: 234, 88, 12;
   --map-hull-line-width: 2;
   --map-hull-hover-line-width: 5;
-  --map-no-power: 55, 55, 65;
-  --map-damage: 234, 88, 12;
+  --map-damage: 185, 28, 28;
+  /* Storm heatmap, yellow to dark red (ColorBrewer YlOrRd); alpha keeps the map readable. */
+  --map-heat-1: 255, 255, 178, 120;
+  --map-heat-2: 254, 217, 118, 150;
+  --map-heat-3: 254, 178, 76, 170;
+  --map-heat-4: 253, 141, 60, 185;
+  --map-heat-5: 240, 59, 32, 200;
+  --map-heat-6: 189, 0, 38, 215;
 }
 
 * {
@@ -335,6 +342,51 @@ body {
 .simulation-note {
   color: var(--muted);
   font-size: 0.75rem;
+}
+
+/* Storm severity slider and heatmap key. */
+.storm-panel {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--nav-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.storm-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+#storm-severity {
+  width: 100%;
+  margin: 6px 0 2px;
+  accent-color: var(--accent);
+}
+
+.storm-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.storm-panel p {
+  margin: 8px 0 0;
+}
+
+.heat-bar {
+  height: 10px;
+  margin-top: 8px;
+  border-radius: 5px;
+  background: linear-gradient(to right,
+    rgb(var(--map-heat-1)), rgb(var(--map-heat-2)), rgb(var(--map-heat-3)),
+    rgb(var(--map-heat-4)), rgb(var(--map-heat-5)), rgb(var(--map-heat-6)));
 }
 
 /* Chatbot: a floating button that expands into a chat panel */

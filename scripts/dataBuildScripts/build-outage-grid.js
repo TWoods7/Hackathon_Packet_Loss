@@ -366,15 +366,35 @@ for (const feature of poles.features) {
   }
 
   polesByCircuit.set(circuit, (polesByCircuit.get(circuit) ?? 0) + 1);
-  candidateRows.push({ point, device, circuit, onPrimary });
+  candidateRows.push({ point, device, circuit, onPrimary, pole: feature.properties });
 }
 
-// Weight = circuit's historical line-damage rate per pole; service poles count half.
-const candidates = candidateRows.map(({ point, device, circuit, onPrimary }) => {
-  const rate = (lineDamageByCircuit.get(circuit) ?? 0) / (polesByCircuit.get(circuit) ?? 1);
-  const weight = (rate + 0.0005) * (onPrimary ? 1 : 0.5);
-  return [round(point[0]), round(point[1]), device, round(weight, 6)];
-});
+// ---------------------------------------------------------------------------
+// Storm calibration: how much line damage the worst storm in the data caused.
+// ---------------------------------------------------------------------------
+
+// Group busy report days (10+ reports, gaps of up to 2 days) into storms.
+const reportsPerDay = new Map();
+for (const f of damage.features) {
+  const reported = f.properties.Report_Tim;
+  if (reported) reportsPerDay.set(reported, (reportsPerDay.get(reported) ?? 0) + 1);
+}
+const storms = [];
+for (const reported of [...reportsPerDay.keys()].filter((d) => reportsPerDay.get(d) >= 10).sort()) {
+  const last = storms.at(-1);
+  if (last && (new Date(reported) - new Date(last.end)) / 86400000 <= 2) last.end = reported;
+  else storms.push({ start: reported, end: reported });
+}
+
+// 100% storm severity = the line damage (poles and wires) of the biggest storm.
+const LINE_DAMAGE = new Set(["Pole", "primary", "secondary"]);
+const stormLineDamage = (storm) =>
+  damage.features.filter((f) => {
+    const p = f.properties;
+    return LINE_DAMAGE.has(p.Asset_Type) && p.Report_Tim >= storm.start && p.Report_Tim <= storm.end;
+  }).length;
+const worstStorm = storms.reduce((a, b) => (stormLineDamage(b) > stormLineDamage(a) ? b : a));
+const worstStormLineDamage = stormLineDamage(worstStorm);
 
 // ---------------------------------------------------------------------------
 // 5. Current damage: unrepaired reports, matched to the device they trip.
@@ -499,6 +519,20 @@ for (const f of damage.features) {
 }
 
 // ---------------------------------------------------------------------------
+// Failure candidates for the storm forecast (needs directHours above).
+// ---------------------------------------------------------------------------
+
+// Weight = circuit's historical line-damage rate per pole; service poles count half.
+// Repair hours: a pole on the primary lines gets the pole recipe (sized by height);
+// a service-only pole gets the secondary-wire recipe.
+const candidates = candidateRows.map(({ point, device, circuit, onPrimary, pole }) => {
+  const rate = (lineDamageByCircuit.get(circuit) ?? 0) / (polesByCircuit.get(circuit) ?? 1);
+  const weight = (rate + 0.0005) * (onPrimary ? 1 : 0.5);
+  const hours = directHours({ Asset_Type: onPrimary ? "Pole" : "secondary" }, pole);
+  return [round(point[0]), round(point[1]), device, round(weight, 6), hours];
+});
+
+// ---------------------------------------------------------------------------
 // Write the browser file.
 // ---------------------------------------------------------------------------
 
@@ -509,9 +543,11 @@ const output = {
       "Outage grid for the map. A customer has no power when any device in its chain is tripped. " +
       "Current damage is the unrepaired reports, treated as today's outages (simulation, not live data).",
     customerChains: "Aligned with customers.json rows: device indices from the customer's transformer up to the substation breaker. Empty = no upstream data.",
-    candidates: "Poles that can fail in a simulated storm: the device they trip and a relative failure weight from historical damage on their circuit.",
+    candidates: "Poles that can fail in a simulated storm: the device they trip, a relative failure weight from historical damage on their circuit, and direct repair hours from labor.json.",
     traceMethod: "device = the damaged asset is the device; line-trace = protection zone along primary lines; secondary = transformer feeding the wire; nearest-transformer = low-confidence fallback; untraced = couldn't be matched; none = no customer impact (lights, capacitor banks).",
     indirectLaborMultiplier: labor.indirectLaborMultiplier,
+    // 100% storm severity in the map = this many broken poles and wires.
+    worstStorm: { ...worstStorm, lineDamage: worstStormLineDamage },
   },
   devices: {
     fields: ["type", "lng", "lat", "circuit", "customers"],
@@ -524,7 +560,7 @@ const output = {
     ]),
   },
   customerChains,
-  candidates: { fields: ["lng", "lat", "device", "weight"], rows: candidates },
+  candidates: { fields: ["lng", "lat", "device", "weight", "directHours"], rows: candidates },
   damages: {
     fields: ["lng", "lat", "assetType", "damageType", "circuit", "reported", "device", "directHours", "traceMethod"],
     rows: damageRows,
@@ -546,6 +582,8 @@ console.table({
   protectionZones: zones.length,
   zonesWithoutDevice: zones.filter((z) => z.device == null).length,
   failureCandidates: candidates.length,
+  worstStorm: `${worstStorm.start} to ${worstStorm.end}`,
+  worstStormLineDamage,
   polesOffNetwork,
   currentDamages: damageRows.length,
   trippedDevices: tripped.size,

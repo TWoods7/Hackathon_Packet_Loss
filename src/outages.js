@@ -66,3 +66,92 @@ export function computeOutages(grid, tripped, damages) {
 
   return { noPower, zones };
 }
+
+// ---------------------------------------------------------------------------
+// Storm forecast: chance of losing power and expected hours without power.
+// ---------------------------------------------------------------------------
+
+// Repair crews working the storm, and people per crew (labor hours are per person).
+// 60 crews of 4 restore the worst storm in about two days on average, matching the
+// 1-2 day median repair time recorded for the Feb 2025 storm.
+export const CREWS = 60;
+export const CREW_SIZE = 4;
+
+// Precompute per-customer totals once; the slider then only rescales them.
+export function prepareForecast(grid) {
+  // Per device: summed failure weight of the poles behind it, and weighted repair hours.
+  const deviceWeight = new Float64Array(grid.devices.length);
+  const deviceWeightedHours = new Float64Array(grid.devices.length);
+  for (const [, , device, weight, hours] of grid.candidates) {
+    deviceWeight[device] += weight;
+    deviceWeightedHours[device] += weight * hours;
+  }
+
+  // Per customer: every pole that can cut its power is behind some device in its chain.
+  const customers = grid.customerChains.length;
+  const exposure = new Float64Array(customers);
+  const repairHours = new Float64Array(customers);
+  grid.customerChains.forEach((chain, i) => {
+    let weight = 0;
+    let weightedHours = 0;
+    for (const device of chain) {
+      weight += deviceWeight[device];
+      weightedHours += deviceWeightedHours[device];
+    }
+    exposure[i] = weight;
+    repairHours[i] = weight ? weightedHours / weight : 0;
+  });
+
+  return { exposure, repairHours };
+}
+
+// Forecast outages for a storm severity from 0 (calm) to 1 (the worst storm in the data).
+export function stormForecast(grid, prepared, severity) {
+  const customers = grid.customerChains.length;
+  const expectedHours = new Float32Array(customers);
+  const result = { severity, expectedHours, brokenPoles: 0, customersOut: 0, typicalHours: 0, stormClearHours: 0 };
+  if (severity <= 0) return result;
+
+  // Each pole fails with chance 1 - e^(-scale x weight). Find the scale that breaks,
+  // on average, the requested share of the worst storm's poles and wires.
+  const target = severity * grid.meta.worstStorm.lineDamage;
+  const expectedFailures = (scale) =>
+    grid.candidates.reduce((sum, row) => sum + 1 - Math.exp(-scale * row[3]), 0);
+  let low = 0;
+  let high = 1;
+  while (expectedFailures(high) < target) high *= 2;
+  for (let step = 0; step < 40; step++) {
+    const mid = (low + high) / 2;
+    if (expectedFailures(mid) < target) low = mid;
+    else high = mid;
+  }
+  const scale = high;
+
+  // Crew time for one repair = direct hours x indirect multiplier / people per crew.
+  const crewHoursPerRepair = grid.meta.indirectLaborMultiplier / CREW_SIZE;
+  const totalCrewHours = grid.candidates.reduce(
+    (sum, row) => sum + (1 - Math.exp(-scale * row[3])) * row[4] * crewHoursPerRepair,
+    0,
+  );
+  // All crews together clear the storm in this long; a customer waits half of it on average.
+  const stormClearHours = totalCrewHours / CREWS;
+
+  let customersOut = 0;
+  let hoursOut = 0;
+  for (let i = 0; i < customers; i++) {
+    const chanceOut = 1 - Math.exp(-scale * prepared.exposure[i]);
+    const hoursIfOut = prepared.repairHours[i] * crewHoursPerRepair + stormClearHours / 2;
+    expectedHours[i] = chanceOut * hoursIfOut;
+    customersOut += chanceOut;
+    hoursOut += chanceOut * hoursIfOut;
+  }
+
+  return {
+    severity,
+    expectedHours,
+    brokenPoles: target,
+    customersOut,
+    typicalHours: customersOut ? hoursOut / customersOut : 0,
+    stormClearHours,
+  };
+}

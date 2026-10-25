@@ -1,17 +1,20 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
+import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { LineLayer, ScatterplotLayer } from "@deck.gl/layers";
-import { rotatingCalipers } from "../scripts/boundingAlgorithm.js";
-import { loadGrid, trippedDevices, computeOutages } from "./outages.js";
+import {
+  loadGrid,
+  trippedDevices,
+  computeOutages,
+  prepareForecast,
+  stormForecast,
+  CREWS,
+  CREW_SIZE,
+} from "./outages.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 // Fallback center: AEP challenge service area, southwest Virginia
 const DEFAULT_CENTER = { lat: 37.237, lng: -79.949 };
-
-// Service kind codes from scripts/dataBuildScripts/build-customers.js
-const KIND_LABELS = ["Overhead", "Underground", "Unknown"];
-// Legend checkbox keys for each kind code; must match data-layer in map.html
-const KIND_KEYS = ["overhead", "underground", "unknown"];
 
 // deck.gl needs numeric RGB(A) arrays; color values live in style.css.
 const mapStyles = getComputedStyle(document.documentElement);
@@ -19,12 +22,6 @@ const mapStyles = getComputedStyle(document.documentElement);
 function layerColor(property) {
   return mapStyles.getPropertyValue(property).trim().split(",").map(Number);
 }
-const KIND_COLORS = [
-  layerColor("--map-overhead"),
-  layerColor("--map-underground"),
-  layerColor("--map-unknown"),
-];
-const LIFE_SUPPORT_COLOR = layerColor("--map-life-support");
 const NEAREST_COLOR = layerColor("--map-nearest");
 const ADDRESS_COLOR = layerColor("--map-address");
 const OUTLINE_COLOR = layerColor("--map-outline");
@@ -33,8 +30,16 @@ const HULL_FILL_COLOR = layerColor("--map-hull-fill");
 const HULL_SELECTED_FILL_COLOR = layerColor("--map-hull-selected-fill");
 const HULL_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-line-width"));
 const HULL_HOVER_LINE_WIDTH = Number(mapStyles.getPropertyValue("--map-hull-hover-line-width"));
-const NO_POWER_COLOR = layerColor("--map-no-power");
 const DAMAGE_COLOR = layerColor("--map-damage");
+// Storm heatmap: yellow (few expected hours without power) to dark red (many).
+const HEAT_COLORS = [1, 2, 3, 4, 5, 6].map((step) => layerColor(`--map-heat-${step}`));
+// Fixed hour range so colors mean the same thing at every slider position.
+const HEAT_DOMAIN = [0.25, 48];
+
+// Outage circles never point at a single home: centers snap to a ~150 m grid
+// and every circle is at least 300 m across its radius.
+const OUTAGE_GRID_DEGREES = 0.0015;
+const OUTAGE_MIN_RADIUS_M = 300;
 
 // Shown wherever outage results appear: the data has no live outage feed.
 const SIMULATION_NOTE = "Simulated from unrepaired damage reports, not live outage data.";
@@ -88,24 +93,28 @@ function findNearestCustomer(customers, point) {
   return { customer: nearest, distance: best };
 }
 
+// Describe a duration in hours, or half-days once it's over a day and a half.
+function formatHours(hours) {
+  if (hours < 1) return "under an hour";
+  if (hours < 36) return `about ${Math.round(hours)} hours`;
+  return `about ${Math.round(hours / 24 * 2) / 2} days`;
+}
+
 // Display a distance in feet, or miles for longer distances.
 function formatDistance(meters) {
   const feet = meters * 3.28084;
   return feet < 1000 ? `${Math.round(feet)} ft` : `${(meters / 1609.344).toFixed(2)} mi`;
 }
 
-// Build the HTML shown when a customer marker is clicked.
-function customerInfoHtml(c) {
-  return `
-    <div class="info">
-      <strong>${c.location || "Customer"}</strong>
-      <div>Service: ${KIND_LABELS[c.kind]}</div>
-      <div>Customers at point: ${c.customerCount}</div>
-      <div>Circuit: ${c.circuitId}</div>
-      <div>Transformer: ${c.transformer}</div>
-      <div>Premise: ${c.premise}</div>
-      ${c.lifeSupport ? '<div class="life-support">Life support customer</div>' : ""}
-    </div>`;
+// An approximate circle covering an outage's customers without revealing homes.
+function outageCircle(zone, customers) {
+  const points = zone.customers.map((i) => customers[i]);
+  const mean = (key) => points.reduce((sum, c) => sum + c[key], 0) / points.length;
+  const snap = (value) => Math.round(value / OUTAGE_GRID_DEGREES) * OUTAGE_GRID_DEGREES;
+  const center = { lat: snap(mean("lat")), lng: snap(mean("lng")) };
+  // Cover every affected customer, with margin, but never shrink below the minimum.
+  const farthest = Math.max(...points.map((c) => distanceMeters(center, c)));
+  return { center, radius: Math.max(OUTAGE_MIN_RADIUS_M, farthest + 100) };
 }
 
 // Build the HTML shown when a damage marker is clicked.
@@ -128,13 +137,12 @@ function damageSummary(damages) {
 }
 
 // Title and multi-line text for an outage's side panel.
-function outageDetails(zone, device, customers) {
-  const lifeSupport = zone.customers.filter((i) => customers[i].lifeSupport).length;
+// Life-support counts stay out: in a small outage they could identify a household.
+function outageDetails(zone, device) {
   return {
     title: `Outage: ${device.type} on ${device.circuit ?? "unknown circuit"}`,
     text: [
-      `${zone.customers.length.toLocaleString()} customers without power` +
-        (lifeSupport ? ` (${lifeSupport} life support)` : ""),
+      `${zone.customers.length.toLocaleString()} customers without power`,
       `Cause: ${damageSummary(zone.damages)}`,
       `Estimated repair: ${Math.round(zone.crewHours)} crew-hours`,
       SIMULATION_NOTE,
@@ -194,56 +202,25 @@ function setupHullPanel(mapEl, onSelectionChange) {
 }
 
 
-// Build the visible marker and search layers while keeping all boundaries.
-function buildLayers(customers, lifeSupport, onClick, search, visibility, boundaryLayers, outage) {
-  // Filtering ~120k points takes a few ms, so it's fine to redo on every toggle
-  const shownCustomers = customers.filter((c) => visibility[KIND_KEYS[c.kind]]);
-
+// Build the visible layers. Individual customer locations are never drawn:
+// today's outages show as approximate circles over the storm forecast heatmap.
+function buildLayers(search, visibility, boundaryLayers, outage) {
+  const { forecast } = outage;
   const layers = [
+    // Averaged (MEAN), so dense neighborhoods don't look riskier just for having more homes.
+    new HeatmapLayer({
+      id: "storm-heatmap",
+      data: outage.customers,
+      visible: forecast.severity > 0,
+      getPosition: (c) => [c.lng, c.lat],
+      getWeight: (c) => forecast.expectedHours[c.index],
+      aggregation: "MEAN",
+      colorRange: HEAT_COLORS,
+      colorDomain: HEAT_DOMAIN,
+      radiusPixels: 40,
+      updateTriggers: { getWeight: forecast.severity },
+    }),
     ...boundaryLayers,
-    new ScatterplotLayer({
-      id: "customers",
-      data: shownCustomers,
-      getPosition: (c) => [c.lng, c.lat],
-      getFillColor: (c) => KIND_COLORS[c.kind],
-      getRadius: 6,
-      radiusUnits: "meters",
-      radiusMinPixels: 1.5,
-      radiusMaxPixels: 8,
-      opacity: 0.7,
-      pickable: true,
-      onClick,
-    }),
-    new ScatterplotLayer({
-      id: "life-support",
-      data: lifeSupport,
-      visible: visibility.lifeSupport,
-      getPosition: (c) => [c.lng, c.lat],
-      getFillColor: LIFE_SUPPORT_COLOR,
-      getLineColor: OUTLINE_COLOR,
-      stroked: true,
-      lineWidthMinPixels: 1,
-      getRadius: 20,
-      radiusUnits: "meters",
-      radiusMinPixels: 5,
-      radiusMaxPixels: 14,
-      pickable: true,
-      onClick,
-    }),
-    // Customers inside an outage, drawn over their normal dot.
-    new ScatterplotLayer({
-      id: "no-power",
-      data: outage.noPowerCustomers,
-      visible: visibility.noPower,
-      getPosition: (c) => [c.lng, c.lat],
-      getFillColor: NO_POWER_COLOR,
-      getRadius: 6,
-      radiusUnits: "meters",
-      radiusMinPixels: 2,
-      radiusMaxPixels: 8,
-      pickable: true,
-      onClick,
-    }),
     // Damaged equipment that hasn't been repaired.
     new ScatterplotLayer({
       id: "damage",
@@ -283,8 +260,6 @@ function buildLayers(customers, lifeSupport, onClick, search, visibility, bounda
         lineWidthUnits: "pixels",
         getRadius: 14,
         radiusUnits: "pixels",
-        pickable: true,
-        onClick,
       }),
       new ScatterplotLayer({
         id: "address",
@@ -355,18 +330,8 @@ async function initMap() {
   const serviceBounds = fitToCustomers(map, customers);
 
   const infoWindow = new InfoWindow();
-  // Open a customer details popup at the clicked marker.
-  const showInfo = ({ object }) => {
-    if (!object) return;
-    infoWindow.setContent(customerInfoHtml(object));
-    infoWindow.setPosition({ lat: object.lat, lng: object.lng });
-    infoWindow.open(map);
-  };
-
-  const lifeSupport = customers.filter((c) => c.lifeSupport);
 
   // Work out today's outages from the unrepaired damage.
-  // A storm slider can later pass a bigger tripped set into computeOutages.
   const { noPower, zones } = computeOutages(grid, trippedDevices(grid.damages), grid.damages);
   const zoneByCustomer = new Map();
   for (const zone of zones) for (const i of zone.customers) zoneByCustomer.set(i, zone);
@@ -379,11 +344,15 @@ async function initMap() {
     infoWindow.open(map);
   };
 
+  // The storm forecast starts calm; the severity slider updates it.
+  const forecastInputs = prepareForecast(grid);
   const outage = {
-    noPowerCustomers: customers.filter((c) => noPower[c.index]),
+    customers,
+    forecast: stormForecast(grid, forecastInputs, 0),
     damages: grid.damages,
     onDamageClick: showDamageInfo,
   };
+  const customersWithoutPower = noPower.reduce((sum, value) => sum + value, 0);
 
   // Reset saved checkbox states so the legend and map both start with items off.
   const legendBoxes = [...document.querySelectorAll(".legend input[data-layer]")];
@@ -402,25 +371,27 @@ async function initMap() {
   };
   const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
-  // Create one hull layer around each outage's customers.
-  // Outages with fewer than three locations get no hull; their grey dots still show.
+  // Create one approximate orange circle per outage (see outageCircle).
+  // Each is its own layer so the hover/selection styling below works per outage.
   const zoneByLayerId = new Map();
-  let boundaryLayers = zones.flatMap((zone) => {
+  let boundaryLayers = zones.map((zone) => {
     const id = `outage-${zone.device}`;
-    const coordinates = zone.customers.map((i) => [customers[i].lng, customers[i].lat]);
-    const details = outageDetails(zone, grid.devices[zone.device], customers);
-    const layer = rotatingCalipers(coordinates, {
+    const details = outageDetails(zone, grid.devices[zone.device]);
+    zoneByLayerId.set(id, zone);
+    return new ScatterplotLayer({
       id,
+      data: [outageCircle(zone, customers)],
+      getPosition: (circle) => [circle.center.lng, circle.center.lat],
+      getRadius: (circle) => circle.radius,
+      radiusUnits: "meters",
+      stroked: true,
       getFillColor: HULL_FILL_COLOR,
       getLineColor: layerColor("--map-hull-outline"),
       getLineWidth: HULL_LINE_WIDTH,
       lineWidthUnits: "pixels",
+      pickable: true,
       onClick: () => toggleHullPanel(id, details),
     });
-    // rotatingCalipers returns plain coordinates when there are two or fewer points.
-    if (Array.isArray(layer)) return [];
-    zoneByLayerId.set(id, zone);
-    return [layer];
   });
   const boundaryIds = new Set(boundaryLayers.map((layer) => layer.id));
 
@@ -457,14 +428,14 @@ async function initMap() {
   };
 
   const overlay = new GoogleMapsOverlay({
-    layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers, outage),
+    layers: buildLayers(currentSearch, visibility, boundaryLayers, outage),
     onHover: updateHullHover,
     getTooltip: hullTooltip,
   });
 
   // Refresh the layers using the current checkbox choices and search result.
   const redraw = () =>
-    overlay.setProps({ layers: buildLayers(customers, lifeSupport, showInfo, currentSearch, visibility, boundaryLayers, outage) });
+    overlay.setProps({ layers: buildLayers(currentSearch, visibility, boundaryLayers, outage) });
   overlay.setMap(map);
 
   // Connect each legend checkbox to its layer visibility setting.
@@ -475,10 +446,45 @@ async function initMap() {
     });
   });
 
+  // Storm severity slider: recompute the forecast at most once per frame.
+  const stormSlider = document.getElementById("storm-severity");
+  const stormValue = document.getElementById("storm-value");
+  const stormSummary = document.getElementById("storm-summary");
+  const heatLegend = document.getElementById("heat-legend");
+  const worst = grid.meta.worstStorm;
+  document.getElementById("storm-assumptions").textContent =
+    `Forecast model, not confirmed outages. 100% = the ${worst.start} to ${worst.end} storm ` +
+    `(${worst.lineDamage} broken poles and wires). Assumes ${CREWS} repair crews of ${CREW_SIZE}.`;
+
+  let stormFrame = null;
+  const updateStorm = () => {
+    stormFrame = null;
+    const severity = Number(stormSlider.value) / 100;
+    const forecast = stormForecast(grid, forecastInputs, severity);
+    outage.forecast = forecast;
+    redraw();
+
+    stormValue.textContent = `${stormSlider.value}%`;
+    heatLegend.hidden = severity === 0;
+    // Round customer counts to the nearest hundred: this is an estimate, not a tally.
+    const people = forecast.customersOut < 100
+      ? "Fewer than 100"
+      : `About ${(Math.round(forecast.customersOut / 100) * 100).toLocaleString()}`;
+    stormSummary.textContent = severity === 0
+      ? "Calm weather: no storm damage expected. Move the slider to forecast a storm."
+      : `About ${Math.round(forecast.brokenPoles).toLocaleString()} broken poles and wires. ` +
+        `${people} customers likely lose power, typically for ${formatHours(forecast.typicalHours)}.`;
+  };
+  stormSlider.value = "0";
+  stormSlider.addEventListener("input", () => {
+    if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
+  });
+  updateStorm();
+
 
   document.getElementById("customer-count").textContent =
-    `${customers.length.toLocaleString()} customers · ${lifeSupport.length} life support · ` +
-    `${outage.noPowerCustomers.length.toLocaleString()} without power`;
+    `${customersWithoutPower.toLocaleString()} of ${customers.length.toLocaleString()} customers without power · ` +
+    `${zones.length} outages`;
 
   // Describe whether a customer has power, and why not.
   const powerStatus = (customer) => {
@@ -530,8 +536,6 @@ async function initMap() {
       showResult(`
         <div><strong>${result.formatted_address}</strong></div>
         <div>Nearest node: ${formatDistance(distance)} away</div>
-        <div>Service: ${KIND_LABELS[nearest.kind]} · Circuit ${nearest.circuitId}</div>
-        <div>Transformer: ${nearest.transformer}</div>
         <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
         <div class="simulation-note">${SIMULATION_NOTE}</div>
       `);
