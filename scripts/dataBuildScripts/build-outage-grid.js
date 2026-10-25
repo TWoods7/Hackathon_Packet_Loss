@@ -521,15 +521,11 @@ const output = {
     // 100% storm severity in the map = this many broken poles and wires.
     worstStorm: { ...worstStorm, lineDamage: worstStormLineDamage },
   },
+  // No device coordinates: the browser doesn't use them, and a transformer that
+  // serves one home would give away that home's exact location.
   devices: {
-    fields: ["type", "lng", "lat", "circuit", "customers"],
-    rows: devices.map((d) => [
-      d.type,
-      d.coords ? round(d.coords[0]) : null,
-      d.coords ? round(d.coords[1]) : null,
-      d.circuit,
-      d.customers,
-    ]),
+    fields: ["type", "circuit", "customers"],
+    rows: devices.map((d) => [d.type, d.circuit, d.customers]),
   },
   customerChains,
   candidates: { fields: ["lng", "lat", "device", "weight", "directHours"], rows: candidates },
