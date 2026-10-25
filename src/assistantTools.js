@@ -26,6 +26,18 @@ const NOTE = "The displayed outages are one sampled storm outcome; risk forecast
 const MAX_MATCH_METERS = 500;
 const CLOSE_MATCH_METERS = 150;
 
+// Report missing map coverage without using a distant customer's simulation.
+function notCovered() {
+  return {
+    error: "This area is not covered.",
+    covered: false,
+    confidence: "low",
+    reliable_match: false,
+    has_network_data: false,
+    note: "No location-specific simulation result is available here. Use the utility's official outage map or contact the utility.",
+  };
+}
+
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 const round1 = (value) => Math.round(value * 10) / 10;
 
@@ -49,6 +61,7 @@ function selection() {
   if (!mapApi) return { error: "The map is still loading. Try again in a moment." };
   const selected = mapApi.getSelection();
   if (!selected) return { error: "No address searched yet. Ask the customer for their address and call search_address." };
+  if (selected.covered === false) return notCovered();
   return selected;
 }
 
@@ -245,6 +258,9 @@ export async function handoffSummary({ declared_needs, safety_flags }) {
   };
   const selected = mapApi && mapApi.getSelection();
   if (!selected) return { ...summary, location: "not provided yet" };
+  if (selected.covered === false) {
+    return { ...summary, ...notCovered(), location: selected.formattedAddress ?? "outside map coverage" };
+  }
 
   const status = currentStatus(selected.customer);
   const restoration = await handlers.estimate_restoration({ storm_level: null, crews: null, access_issue: null });
@@ -420,7 +436,9 @@ export async function draftNotifications({ declared_needs }) {
 const handlers = {
   async search_address({ address }) {
     if (!mapApi) return { error: "The map is still loading. Try again in a moment." };
-    const { formattedAddress, customer, distance } = await mapApi.searchAddress(address);
+    const result = await mapApi.searchAddress(address);
+    if (result.covered === false) return notCovered();
+    const { formattedAddress, customer, distance } = result;
     const confidence = confidenceFor(customer, distance);
     return {
       matched_address: formattedAddress,

@@ -70,7 +70,7 @@ npm run dev
 
 Open the printed URL, normally `http://localhost:5173/`. Vite may choose another port if 5173 is occupied; allow that origin in the Maps key settings too. The app is one page containing the map and a chat view that opens over it when a location is searched.
 
-The storm starts at **Calm**, generating no new simulated damage or outages. Move the slider to generate an outcome. **Area without power** starts enabled; enable **Damaged equipment** to see generated damage markers. After searching, **Nearest to you** shows the address-to-node connection. Click an outage circle for details. Use **Back to map** to return from chat.
+The storm starts at **Calm**, generating no new simulated damage or outages. Move the slider to generate an outcome. Use the **Area without power** and **Damaged equipment** buttons beside the address search bar to toggle those layers; the first starts on and the second starts off. Active buttons use the Search button's color with white text; inactive buttons are white with black text. After searching a covered area, the map automatically shows the address-to-node connection. If the address is outside all forecast hexagon tiles and more than 300 meters from the nearest node, the map shows **This area is not covered.**, keeps only the address marker, and stays on the map. Tile coverage is independent of the storm colors, including in calm weather. Click an outage circle for details. Use **Back to map** to return from chat.
 
 Restart Vite after changing `.env` or the server prompt. Start a fresh conversation when checking revised prompt behavior.
 
@@ -84,6 +84,7 @@ Run commands from the repository root. None of the application commands rebuild 
 | `npm run dev` | Run Vite with the `/api/chat` route | No |
 | `npm run build` | Compile the app page and copy public assets into `dist/` | No |
 | `npm run preview` | Serve the existing build with the local chat route | No |
+| `node --test` | Check tile coverage and uncovered-location assistant behavior without model requests | No |
 | `npm run data:customers -- "path/to/Customer_Clip"` | Replace the private customer JSON from a shapefile basename without `.shp` | Yes: customer source files |
 | `npm run data:grid` | Rebuild the public grid and aligned public customer locations, then mark devices that serve priority locations (`add-priority-locations.js`) | Yes |
 
@@ -93,7 +94,7 @@ npm run build
 npm run preview
 ```
 
-Use the preview URL printed by Vite and allow that origin in the Maps key settings. Browser configuration is read at build time; rebuild after changing it. Static hosting of `dist/` alone does not provide `/api/chat`: deployed chat requires a server route equivalent to `server/chat.js`. The project has no automated test command configured.
+Use the preview URL printed by Vite and allow that origin in the Maps key settings. Browser configuration is read at build time; rebuild after changing it. Static hosting of `dist/` alone does not provide `/api/chat`: deployed chat requires a server route equivalent to `server/chat.js`. Run `node --test` for the local coverage checks.
 
 ## Project layout
 
@@ -203,7 +204,7 @@ Browser code uses `fetch()`; Node build scripts use local file readers. The norm
 
 ## Outage Assistant
 
-Searching a location opens the chat view over the loaded map. The browser posts conversation turns to `/api/chat`; `server/chat.js` adds the server-owned prompt and tool definitions and calls Anthropic. Tool requests execute in `src/assistantTools.js` against the active map state, and the browser returns their results for the next assistant turn.
+Searching a covered location opens the chat view over the loaded map; uncovered searches stay on the map with a coverage notice. The browser posts conversation turns to `/api/chat`; `server/chat.js` adds the server-owned prompt and tool definitions and calls Anthropic. Tool requests execute in `src/assistantTools.js` against the active map state, and the browser returns their results for the next assistant turn.
 
 - `search_address` selects a nearby service node. `get_current_status` describes its sampled outage status, not its real electricity supply.
 - `set_storm_level` moves the slider to a named level (Claude matches the customer's words, such as "a thunderstorm" or "a hurricane") and updates the map and returns forecast expectations plus a separate sampled-outcome summary.
@@ -213,7 +214,7 @@ Searching a location opens the chat view over the loaded map. The browser posts 
 
 The prompt requires fresh tool reads for follow-up predictions, separation of sampled outcomes and expectations, and a fallback for unreliable matches. Customer-facing explanations appear under "How I got this". Tool results exclude premise IDs, coordinates, device IDs, circuit IDs, and life-support flags. Needs are declared by the customer rather than inferred from private records.
 
-**Confidence.** `confidenceFor()` in `assistantTools.js` returns low when there's no usable network match (no upstream data, or the address is over 500 m from a service point). Otherwise it's high only when all three hold: the address is within 150 m of a service point, the customer's lines have recorded storm damage (their failure weight is above the no-history baseline), and the storm level matches a real storm in the records (`observed` in `stormLevels.js`). Missing any of these gives medium, and the reason names what's missing.
+**Confidence.** Uncovered addresses return low confidence without using a nearby node's status or predictions. For covered addresses, `confidenceFor()` in `assistantTools.js` returns low when there's no usable network match (no upstream data, or the address is over 500 m from a service point). Otherwise it's high only when all three hold: the address is within 150 m of a service point, the customer's lines have recorded storm damage (their failure weight is above the no-history baseline), and the storm level matches a real storm in the records (`observed` in `stormLevels.js`). Missing any of these gives medium, and the reason names what's missing.
 
 **Priority locations.** `scripts/dataBuildScripts/add-priority-locations.js` matches each hospital, fire station, and ambulance station to the nearest customer point with network data (within 300 m; 40 of 52 match, the rest are outside the service area) and stores a per-device count in `grid.devices.priority`. No facility names or coordinates reach the browser. Repairs on those devices go first in each outage's steps and near the front of the storm queue. The assistant says when a customer's repair also restores a priority location but never what or where it is, and the outage panel doesn't mark which step it is.
 
@@ -338,7 +339,7 @@ Working outputs remain ignored under `data/extracted/`. Share approved updates t
 | `node` or `npm` is not recognized | Install Node.js with npm, reopen the terminal, and check PATH. |
 | PowerShell blocks `npm.ps1` | Use `npm.cmd ci` or `npm.cmd run dev`. |
 | Missing Google Maps key or map authorization errors | Check root `.env`, enabled APIs, allowed origin, and restart/rebuild as appropriate. |
-| No outage circles or damage markers | In calm weather there is no generated damage; choose a stronger storm level and enable the matching legend checkbox. |
+| No outage circles or damage markers | In calm weather there is no generated damage; choose a stronger storm level and turn on the matching layer button beside the address search bar. |
 | Missing `@anthropic-ai/sdk` during build | Run `npm.cmd ci` after pulling dependency changes, then retry the build. |
 | Chat says it is not configured | Set the server-only `ANTHROPIC_API_KEY`, restart Vite, and begin a fresh conversation. |
 | Chat route missing on static hosting | Provide the server middleware or use local Vite dev/preview; `dist/` alone has no API route. |

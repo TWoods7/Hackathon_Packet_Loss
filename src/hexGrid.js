@@ -57,6 +57,24 @@ export function buildHexGrid(customers) {
   return hexes;
 }
 
+// Check the actual tile polygons, counting points on their edges as covered.
+export function isPointInHexGrid(point, hexes) {
+  return hexes.some(({ polygon }) => {
+    let side = 0;
+    for (let i = 0; i < polygon.length; i++) {
+      const [ax, ay] = polygon[i];
+      const [bx, by] = polygon[(i + 1) % polygon.length];
+      const cross = (bx - ax) * (point.lat - ay) - (by - ay) * (point.lng - ax);
+      // Allow for floating-point rounding along shared edges.
+      if (Math.abs(cross) <= 1e-12) continue;
+      const nextSide = Math.sign(cross);
+      if (side && side !== nextSide) return false;
+      side = nextSide;
+    }
+    return true;
+  });
+}
+
 // Average a per-customer value (e.g. expected hours without power) into each hexagon.
 export function averageIntoHexes(hexes, values) {
   for (const hex of hexes) {
