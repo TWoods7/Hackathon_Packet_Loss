@@ -201,7 +201,7 @@ console.log(`Exceptions: ${exceptionPath}`);
 // Each result represents one recloser occurrence in one premise's chain.
 
 // Load customer records using the readJson helper defined above.
-const customers = await readJson("public/data/customers.json");
+const customers = await readJson("data/extracted/customers.json");
 
 // Resolve the customer columns by name.
 const customerColumns = Object.fromEntries(
