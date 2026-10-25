@@ -731,7 +731,7 @@ body {
   color: #000;
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 999px;
   cursor: pointer;
 }
 
