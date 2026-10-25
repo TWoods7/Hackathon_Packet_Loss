@@ -121,6 +121,7 @@ Open the preview URL printed in the terminal. The Maps key must allow that origi
 
 ```text
 .env.example                  Maps configuration template
+AGENTS.md                     Rules for coding agents (Codex, Claude): data privacy and file alignment
 index.html                    The app page: map, search, legend, storm slider, and chat markup
 src/
   map.js                      Map layers, address search, and outage panels
@@ -185,6 +186,18 @@ console.log(result.zones.length);
 Browser modules use `fetch()` for served data. Node build scripts can read local working files with `node:fs`. The app does not currently load the normalized asset catalog under `data/extracted/normalized/`; creating that catalog alone does not add a map layer.
 
 ## Optional: change or rebuild the datasets
+
+> **Data layout change (privacy for the demo).** `public/data/customers.json` used to hold every customer field (premise, transformer, circuit, street, life support). It now holds only rounded `lng`/`lat`, because everything in `public/` can be downloaded from the running app. The full file moved to `data/extracted/customers.json` (ignored by Git), and every data script now reads it from there. `npm run data:grid` writes the slim public copy.
+>
+> If a data script fails with `ENOENT ... data/extracted/customers.json`, or complains that a field such as `premise` or `transformer` is missing, restore the full file from Git history (the last commit that had it), then rerun the script:
+>
+> ```sh
+> # Recreate the private full customer file from before the privacy change.
+> mkdir -p data/extracted
+> git show a3a4575:public/data/customers.json > data/extracted/customers.json
+> ```
+>
+> Never copy the full file back into `public/data/`. Don't add premise, transformer, circuit, street, or life-support fields to anything under `public/`, or show circuit IDs in the map UI.
 
 Skip this section to work on the current interface or map using the committed snapshot. `npm ci` and `npm run build` do not run the data pipeline.
 
@@ -269,6 +282,7 @@ Working outputs remain ignored under `data/extracted/`. Share approved updates t
 | Google Maps authorization or address-search errors | Check the browser console, enabled APIs, key restrictions, and Google Cloud account configuration. |
 | Map loads but customer or damage markers are absent | Enable the corresponding legend checkboxes; they start unchecked. |
 | Missing `customers.json` or `grid.json` | Restore the tracked files in `public/data/` from the intended branch/commit. Rebuilding requires the additional inputs above, including `data/extracted/customers.json`. |
-| `ENOENT` while running a data script | Run it from the repository root and check that its extracted input files have been restored. |
+| `ENOENT` while running a data script | Run it from the repository root and check that its extracted input files have been restored. For `data/extracted/customers.json`, see the data layout note in [Optional: change or rebuild the datasets](#optional-change-or-rebuild-the-datasets). |
+| A data script says `premise`, `transformer`, or `circuitId` is missing | It is reading the slim public customer file. Data scripts must read `data/extracted/customers.json`; restore it with `git show a3a4575:public/data/customers.json > data/extracted/customers.json`. |
 | `npm ci` fails with Windows file-lock errors | Stop this project's dev/preview server with Ctrl+C, then retry. |
 | Chat replies say the assistant is not connected | Expected: `src/chatbot.js` currently returns a placeholder reply. |
