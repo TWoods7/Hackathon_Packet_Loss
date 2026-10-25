@@ -18,10 +18,7 @@ export default defineConfig(({ mode }) => {
     plugins: [chatApi(env.ANTHROPIC_API_KEY)],
     build: {
       rollupOptions: {
-        input: {
-          main: resolve(__dirname, "index.html"),
-          map: resolve(__dirname, "map.html"),
-        },
+        input: resolve(__dirname, "index.html"),
       },
     },
   };

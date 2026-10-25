@@ -1,6 +1,6 @@
 # Packet Loss
 
-Packet Loss is a HackOHIO 2026 outage-concierge prototype built with JavaScript, Vite, Google Maps, and deck.gl. It displays customer locations, estimates outage areas from the challenge's damage and network data, and lets users look up an address near the service area in southwest Virginia.
+Packet Loss's **Chat AEP** is a HackOHIO 2026 outage-concierge prototype built with JavaScript, Vite, Google Maps, and deck.gl. It displays customer locations, estimates outage areas from the challenge's damage and network data, and lets users look up an address near the service area in southwest Virginia.
 
 **A fresh clone includes the data needed to run the current map.** You need Node.js, npm, and a Google Maps API key. You do not need QGIS, another developer's QGIS project, or a local `data/extracted/` directory to run the app.
 
@@ -76,10 +76,7 @@ ANTHROPIC_API_KEY=your_anthropic_key
 npm run dev
 ```
 
-Open the URL printed by Vite, normally:
-
-- Home: `http://localhost:5173/`
-- Map: `http://localhost:5173/map.html`
+Open the URL printed by Vite, normally `http://localhost:5173/`. The app is a single page: the map, and the chat that opens when you search a location.
 
 If port 5173 is occupied, Vite may choose another port. Use the printed URL and allow that origin in the Maps key's website restrictions.
 
@@ -118,14 +115,13 @@ npm run build
 npm run preview
 ```
 
-Open the preview URL printed in the terminal, followed by `/map.html`. The Maps key must allow that origin too. The key is read when building, so changing it requires another build. The project has no automated test command configured.
+Open the preview URL printed in the terminal. The Maps key must allow that origin too. The key is read when building, so changing it requires another build. The project has no automated test command configured.
 
 ## Project layout
 
 ```text
 .env.example                  Maps configuration template
-index.html                    Landing page
-map.html                      Map, search, legend, and chat markup
+index.html                    The app page: map, search, legend, storm slider, and chat markup
 src/
   map.js                      Map layers, address search, and outage panels
   outages.js                  Grid loader and outage calculations
