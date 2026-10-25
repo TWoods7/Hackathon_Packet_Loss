@@ -117,14 +117,29 @@ function formatDistance(meters) {
   return feet < 1000 ? `${Math.round(feet)} ft` : `${(meters / 1609.344).toFixed(2)} mi`;
 }
 
-// An approximate circle covering an outage's customers without revealing homes.
+// Center on the coordinate bounds and expand the circle to cover every point.
 function outageCircle(zone, customers) {
-  const points = zone.customers.map((i) => customers[i]);
-  const mean = (key) => points.reduce((sum, c) => sum + c[key], 0) / points.length;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const i of zone.customers) {
+    const point = customers[i];
+    minLat = Math.min(minLat, point.lat);
+    maxLat = Math.max(maxLat, point.lat);
+    minLng = Math.min(minLng, point.lng);
+    maxLng = Math.max(maxLng, point.lng);
+  }
   const snap = (value) => Math.round(value / OUTAGE_GRID_DEGREES) * OUTAGE_GRID_DEGREES;
-  const center = { lat: snap(mean("lat")), lng: snap(mean("lng")) };
+  const center = {
+    lat: snap(minLat + (maxLat - minLat) / 2),
+    lng: snap(minLng + (maxLng - minLng) / 2),
+  };
   // Cover every affected customer, with margin, but never shrink below the minimum.
-  const farthest = Math.max(...points.map((c) => distanceMeters(center, c)));
+  let farthest = 0;
+  for (const i of zone.customers) {
+    farthest = Math.max(farthest, distanceMeters(center, customers[i]));
+  }
   return { center, radius: Math.max(OUTAGE_MIN_RADIUS_M, farthest + 100) };
 }
 
