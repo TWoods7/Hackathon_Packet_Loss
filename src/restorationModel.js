@@ -110,6 +110,57 @@ export function hoursWithoutPower(ownRepairClockHours, clearHours, queueShare = 
   return ownRepairClockHours + clearHours * queueShare;
 }
 
+// Build a planning range from repair work and an assumed place in the backlog.
+// stepHours may include earlier repairs in the area's single-crew schedule.
+// This is an assumption-based range, not a statistical confidence interval.
+export function restorationRange(ownRepairHours, clearHours, queueShare = 0.5, stepHours = ownRepairHours) {
+  return {
+    lowHours: ownRepairHours,
+    typicalHours: hoursWithoutPower(stepHours, clearHours, queueShare),
+    highHours: stepHours + clearHours,
+  };
+}
+
+// Combine the sampled area's restoration steps with the rest of the storm.
+// The area's work already appears in stepHours, so exclude its labor from the
+// outside backlog to avoid counting that same work a second time.
+export function sampledRestorationRange({
+  ownLineHours,
+  stepHours,
+  zoneLaborHours,
+  stormLaborHours,
+  repairsOnLine,
+  accessLaborHours,
+  multiplier,
+  crews = CREWS,
+  queueShare = 0.5,
+}) {
+  // Reject missing or invalid inputs instead of returning misleading durations.
+  const workValues = [ownLineHours, stepHours, zoneLaborHours, stormLaborHours, repairsOnLine, accessLaborHours, multiplier];
+  if (workValues.some(value => !Number.isFinite(value) || value < 0) || !Number.isFinite(crews) || crews <= 0) {
+    throw new RangeError("Restoration work must be nonnegative and crew count must be positive.");
+  }
+  if (!Number.isFinite(queueShare) || queueShare < 0 || queueShare > 1) {
+    throw new RangeError("Repair queue share must be between 0 and 1.");
+  }
+
+  // Apply the declared access allowance once per repair on the selected line.
+  const accessHours = repairClockHours(accessLaborHours * repairsOnLine, multiplier);
+
+  // Estimate how long the other storm work occupies the available crews.
+  const otherLaborHours = Math.max(0, stormLaborHours - zoneLaborHours);
+  const outsideBacklogHours = stormClearHours(repairClockHours(otherLaborHours, multiplier), crews);
+
+  // The low case skips unrelated area jobs; the typical/high cases retain the
+  // area's ordered repair steps and add a share/all of the outside backlog.
+  return {
+    ...restorationRange(ownLineHours + accessHours, outsideBacklogHours, queueShare, stepHours + accessHours),
+    stepHours,
+    accessHours,
+    outsideBacklogHours,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 4. Step restoration for today's outages
 // ---------------------------------------------------------------------------

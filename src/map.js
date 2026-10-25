@@ -3,13 +3,12 @@ import { LineLayer, PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { buildHexGrid, averageIntoHexes } from "./hexGrid.js";
 import {
   loadGrid,
-  trippedDevices,
-  computeOutages,
   prepareForecast,
-  stormForecast,
 } from "./outages.js";
 import { CREWS, CREW_SIZE } from "./restorationModel.js";
 import { registerMapApi } from "./assistantTools.js";
+// Use the tested sampler and outage calculations as one source of scenario state.
+import { buildStormScenario } from "./stormScenario.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -54,7 +53,7 @@ const OUTAGE_GRID_DEGREES = 0.0015;
 const OUTAGE_MIN_RADIUS_M = 300;
 
 // Shown wherever outage results appear: the data has no live outage feed.
-const SIMULATION_NOTE = "Simulated from unrepaired damage reports, not live outage data.";
+const SIMULATION_NOTE = "One possible storm outcome from historical damage patterns; not live outage information.";
 
 const EARTH_RADIUS_M = 6371000;
 
@@ -150,8 +149,9 @@ function damageInfoHtml(d) {
     <div class="info">
       <strong>${d.damageType ?? "Damage"}</strong>
       <div>Asset: ${d.assetType}</div>
-      <div>Reported: ${d.reported ?? "Unknown"}</div>
-      <div>Not yet repaired</div>
+      ${d.simulated
+        ? "<div>Generated for this storm scenario; not a reported incident.</div>"
+        : `<div>Reported: ${d.reported ?? "Unknown"}</div><div>Not yet repaired</div>`}
     </div>`;
 }
 
@@ -180,14 +180,13 @@ function outageDetails(zone, device, devices) {
       ]
     : [];
   return {
-    title: `Outage: ${device.type.toLowerCase()} tripped`,
+    title: `Simulated outage: ${device.type.toLowerCase()} tripped`,
     text: [
       `${zone.customers.length.toLocaleString()} customers without power`,
       `Cause: ${damageSummary(zone.damages)}`,
-      `Estimated repair: ${Math.round(zone.crewHours)} crew-hours`,
+      `Estimated repair work: ${Math.round(zone.crewHours)} person-hours, including travel/setup`,
       ...steps,
       "",
-      SIMULATION_NOTE,
     ].join("\n"),
   };
 }
@@ -245,7 +244,7 @@ function setupHullPanel(mapEl, onSelectionChange) {
 
 
 // Build the visible layers. Individual customer locations are never drawn:
-// today's outages show as approximate circles over the storm forecast hexagons.
+// sampled outages show as approximate circles over the expected forecast hexagons.
 function buildLayers(search, visibility, boundaryLayers, outage) {
   const { forecast } = outage;
   const layers = [
@@ -264,7 +263,7 @@ function buildLayers(search, visibility, boundaryLayers, outage) {
     // Hide with `visible` rather than removing: deck.gl can't redraw a layer
     // object it has already removed, so the circles wouldn't come back.
     ...boundaryLayers.map((layer) => layer.clone({ visible: visibility.outages })),
-    // Damaged equipment that hasn't been repaired.
+    // Generated damage locations belonging to the active sampled storm.
     new ScatterplotLayer({
       id: "damage",
       data: outage.damages,
@@ -374,10 +373,28 @@ async function initMap() {
 
   const infoWindow = new InfoWindow();
 
-  // Work out today's outages from the unrepaired damage.
-  const { noPower, zones, stepOfCustomer } = computeOutages(grid, trippedDevices(grid.damages), grid.damages);
-  const zoneByCustomer = new Map();
-  for (const zone of zones) for (const i of zone.customers) zoneByCustomer.set(i, zone);
+    // Prepare customer exposure once and start with a calm simulated storm.
+  const forecastInputs = prepareForecast(grid);
+  const scenarioSeed = 2026;
+  let activeScenario = buildStormScenario(
+    grid,
+    forecastInputs,
+    0,
+    scenarioSeed,
+  );
+
+  // Replace these values whenever the active scenario changes.
+  let { noPower, zones } = activeScenario;
+
+  // Keep this array reference stable because the chatbot reads it too.
+  const stepOfCustomer = new Int32Array(
+    activeScenario.stepOfCustomer,
+  );
+
+  // Likewise, update this Map's contents instead of replacing its reference.
+  const zoneByCustomer = new Map(
+    activeScenario.zoneByCustomer,
+  );
 
   // Open a damage details popup at the clicked marker.
   const showDamageInfo = ({ object }) => {
@@ -387,16 +404,14 @@ async function initMap() {
     infoWindow.open(map);
   };
 
-  // The storm forecast starts calm; the severity slider updates it.
-  const forecastInputs = prepareForecast(grid);
+  // Reuse the prepared exposure and initial scenario for the visible layers.
   const outage = {
     // Built once; the slider only refreshes each hexagon's average.
     hexes: buildHexGrid(customers),
-    forecast: stormForecast(grid, forecastInputs, 0),
-    damages: grid.damages,
+    forecast: activeScenario.forecast,
+    damages: activeScenario.damages,
     onDamageClick: showDamageInfo,
   };
-  const customersWithoutPower = noPower.reduce((sum, value) => sum + value, 0);
 
   // Reset saved checkbox states so the legend and map both start with items off,
   // except boxes marked data-default="on" (the outage circles).
@@ -416,29 +431,54 @@ async function initMap() {
   };
   const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
-  // Create one approximate orange circle per outage (see outageCircle).
-  // Each is its own layer so the hover/selection styling below works per outage.
+  // Rebuild circles and their lookups whenever the sampled outages change.
+    // Rebuild circles and lookups whenever sampled outages change.
   const zoneByLayerId = new Map();
-  let boundaryLayers = zones.map((zone) => {
-    const id = `outage-${zone.device}`;
-    const details = outageDetails(zone, grid.devices[zone.device], grid.devices);
-    zoneByLayerId.set(id, zone);
-    return new ScatterplotLayer({
-      id,
-      data: [outageCircle(zone, customers)],
-      getPosition: (circle) => [circle.center.lng, circle.center.lat],
-      getRadius: (circle) => circle.radius,
-      radiusUnits: "meters",
-      stroked: true,
-      getFillColor: HULL_FILL_COLOR,
-      getLineColor: layerColor("--map-hull-outline"),
-      getLineWidth: HULL_LINE_WIDTH,
-      lineWidthUnits: "pixels",
-      pickable: true,
-      onClick: () => toggleHullPanel(id, details),
+  const boundaryIds = new Set();
+
+  function buildBoundaryLayers() {
+    // Remove lookup entries belonging to the previous scenario.
+    zoneByLayerId.clear();
+    boundaryIds.clear();
+
+    // Give each outage its own selectable circle.
+    return zones.map((zone) => {
+      const id = `outage-${zone.device}`;
+
+      // Supply the device collection so restoration steps can be described.
+      const details = outageDetails(
+        zone,
+        grid.devices[zone.device],
+        grid.devices,
+      );
+
+      // Register this circle for hover and selection handling.
+      zoneByLayerId.set(id, zone);
+      boundaryIds.add(id);
+
+      // Preserve the existing approximate-circle geometry and styling.
+      return new ScatterplotLayer({
+        id,
+        data: [outageCircle(zone, customers)],
+        getPosition: (circle) => [
+          circle.center.lng,
+          circle.center.lat,
+        ],
+        getRadius: (circle) => circle.radius,
+        radiusUnits: "meters",
+        stroked: true,
+        getFillColor: HULL_FILL_COLOR,
+        getLineColor: layerColor("--map-hull-outline"),
+        getLineWidth: HULL_LINE_WIDTH,
+        lineWidthUnits: "pixels",
+        pickable: true,
+        onClick: () => toggleHullPanel(id, details),
+      });
     });
-  });
-  const boundaryIds = new Set(boundaryLayers.map((layer) => layer.id));
+  }
+
+  // Calm weather initially has no new damage or outage circles.
+  let boundaryLayers = buildBoundaryLayers();
 
   // Style each hull using its own selection and hover state.
   const updateBoundaryAppearance = () => {
@@ -471,7 +511,7 @@ async function initMap() {
     const zone = zoneByLayerId.get(layer.id);
     const device = grid.devices[zone.device];
     return {
-      text: `${device.type} outage · ${zone.customers.length.toLocaleString()} without power`,
+      text: `Simulated ${device.type.toLowerCase()} outage · ${zone.customers.length.toLocaleString()} without power`,
       className: "hull-tooltip",
     };
   };
@@ -506,28 +546,60 @@ async function initMap() {
   const heatLegend = document.getElementById("heat-legend");
   const worst = grid.meta.worstStorm;
   document.getElementById("storm-assumptions").textContent =
-    `Forecast model, not confirmed outages. 100% = the ${worst.start} to ${worst.end} storm ` +
-    `(${worst.lineDamage} broken poles and wires). Assumes ${CREWS} repair crews of ${CREW_SIZE}.`;
+    `Simulation calibrated to the ${worst.start} to ${worst.end} report window: ` +
+    `100% targets ${worst.lineDamage} expected damage locations. Assumes ${CREWS} crews of ${CREW_SIZE}. Outcomes vary between scenarios.`;
 
   let stormFrame = null;
   const updateStorm = () => {
     stormFrame = null;
+
+    // Convert the slider percentage into the fraction expected by the helper.
+    // Build successfully before replacing the currently displayed scenario.
     const severity = Number(stormSlider.value) / 100;
-    const forecast = stormForecast(grid, forecastInputs, severity);
+    const nextScenario = buildStormScenario(grid, forecastInputs, severity, scenarioSeed);
+
+    // A selected circle or open marker popup belongs to the previous outcome.
+    if (selectedBoundaryId !== null) toggleHullPanel(selectedBoundaryId, {});
+    hoveredBoundaryId = null;
+    infoWindow.close();
+
+    // Update the shared state used by markers, customer status, and the chatbot.
+    activeScenario = nextScenario;
+    noPower = activeScenario.noPower;
+    zones = activeScenario.zones;
+    // Refresh customer restoration steps without replacing the shared array.
+    stepOfCustomer.set(activeScenario.stepOfCustomer);
+    zoneByCustomer.clear();
+    for (const [customer, zone] of activeScenario.zoneByCustomer) {
+      zoneByCustomer.set(customer, zone);
+    }
+
+    // The heatmap retains expected values; circles and markers show one sample.
+    const { forecast, summary } = activeScenario;
     outage.forecast = forecast;
+    outage.damages = activeScenario.damages;
+    boundaryLayers = buildBoundaryLayers();
     averageIntoHexes(outage.hexes, forecast.expectedHours);
+
+    // Refresh an existing search without geocoding again or opening a new chat.
+    renderSearchResult();
     redraw();
+
+    // Keep aggregate counts tied to the actual displayed damage realization.
+    document.getElementById("customer-count").textContent =
+      `${summary.customersOut.toLocaleString()} of ${customers.length.toLocaleString()} customers without power in this simulation · ` +
+      `${summary.zones} outage areas · ${summary.damages} simulated damage locations`;
 
     stormValue.textContent = `${stormSlider.value}%`;
     heatLegend.hidden = severity === 0;
-    // Round customer counts to the nearest hundred: this is an estimate, not a tally.
-    const people = forecast.customersOut < 100
-      ? "Fewer than 100"
-      : `About ${(Math.round(forecast.customersOut / 100) * 100).toLocaleString()}`;
+
+    // Explain why a sampled outcome can differ from the model's expected counts.
     stormSummary.textContent = severity === 0
-      ? "Calm weather: no storm damage expected. Move the slider to forecast a storm."
-      : `About ${Math.round(forecast.brokenPoles).toLocaleString()} broken poles and wires. ` +
-        `${people} customers likely lose power, typically for ${formatHours(forecast.typicalHours)}.`;
+      ? "Calm scenario: no new simulated storm damage. Move the slider to generate a storm outcome."
+      : `Sampled outcome: ${summary.damages} damage locations and ${summary.customersOut.toLocaleString()} customers without power. ` +
+        `Forecast average: about ${Math.round(forecast.brokenPoles)} damage locations and ` +
+        `${(Math.round(forecast.customersOut / 100) * 100).toLocaleString()} customers affected, typically for ${formatHours(forecast.typicalHours)}. ` +
+        "The heatmap shows expected hours; circles and markers show this sampled outcome.";
   };
   stormSlider.value = "0";
   stormSlider.addEventListener("input", () => {
@@ -536,16 +608,12 @@ async function initMap() {
   // Move the slider from code (the chatbot) and redraw right away.
   const setStormSeverity = (percent) => {
     if (stormFrame !== null) cancelAnimationFrame(stormFrame);
-    stormSlider.value = String(percent);
+    // Match the slider's supported range and five-percentage-point increments.
+    if (!Number.isFinite(percent)) throw new RangeError("Storm percentage must be a finite number.");
+    stormSlider.value = String(Math.round(Math.max(0, Math.min(100, percent)) / 5) * 5);
     updateStorm();
     return outage.forecast;
   };
-  updateStorm();
-
-
-  document.getElementById("customer-count").textContent =
-    `${customersWithoutPower.toLocaleString()} of ${customers.length.toLocaleString()} customers without power · ` +
-    `${zones.length} outages`;
 
   // Describe whether a customer has power, and why not.
   const powerStatus = (customer) => {
@@ -553,14 +621,20 @@ async function initMap() {
       return "Power status unknown: no network data for this location.";
     }
     const zone = zoneByCustomer.get(customer.index);
-    if (!zone) return "Power on: no reported damage upstream of this location.";
+    if (!zone) return "No outage generated for this location in the displayed storm scenario.";
     const device = grid.devices[zone.device];
-    const step = stepOfCustomer[customer.index];
-    const restore = zone.steps.length > 1
-      ? ` Restored at step ${step + 1} of ${zone.steps.length}, power back in ${formatHours(zone.steps[step].doneAfterHours)}.`
-      : "";
-    return `No power: inside a ${device.type.toLowerCase()} outage ` +
-      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} crew-hours of repair.${restore}`;
+    // Find the repair step that restores this customer in the active sample.
+    const stepIndex = stepOfCustomer[customer.index];
+    const restorationStep = zone.steps[stepIndex];
+
+    // Describe modeled elapsed time from the start of repair work.
+    const restore = restorationStep
+      ? ` Modeled restoration: step ${stepIndex + 1} of ${zone.steps.length}, ${formatHours(restorationStep.doneAfterHours)} after repair work starts with one crew.`
+      : " Restoration-step information is unavailable.";
+
+    // Keep simulated status, repair effort, and elapsed time distinguishable.
+    return `Simulated outage: a ${device.type.toLowerCase()} tripped ` +
+      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} person-hours of repair work.${restore}`;
   };
 
   const geocoder = new Geocoder();
@@ -575,6 +649,19 @@ async function initMap() {
     resultEl.classList.toggle("error", isError);
     resultEl.innerHTML = html;
   };
+
+  // Refresh the selected address using the latest scenario, without another API call.
+  function renderSearchResult() {
+    // Startup has no selection, so there is no result panel to refresh yet.
+    if (!currentSearch) return;
+    const { nearest, distance, formattedAddress } = currentSearch;
+    showResult(`
+      <div><strong>${formattedAddress}</strong></div>
+      <div>Nearest node: ${formatDistance(distance)} away</div>
+      <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
+      <div class="simulation-note">${SIMULATION_NOTE}</div>
+    `);
+  }
 
   // Find an address, highlight its nearest customer on the map, and show the result.
   // Used by the search form and the chatbot's search_address tool.
@@ -594,12 +681,7 @@ async function initMap() {
     if (map.getZoom() > 18) map.setZoom(18);
 
     input.value = result.formatted_address;
-    showResult(`
-      <div><strong>${result.formatted_address}</strong></div>
-      <div>Nearest node: ${formatDistance(distance)} away</div>
-      <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
-      <div class="simulation-note">${SIMULATION_NOTE}</div>
-    `);
+    renderSearchResult();
     return { formattedAddress: result.formatted_address, customer: nearest, distance };
   };
 
@@ -621,6 +703,9 @@ async function initMap() {
     }
   });
 
+  // Initialize after search rendering and all controls are ready.
+  updateStorm();
+
   // Let the chatbot's tools read this map's state and drive it.
   registerMapApi({
     grid,
@@ -630,7 +715,9 @@ async function initMap() {
     damageSummary,
     searchAddress,
     setStormSeverity,
-    getSeverity: () => Number(stormSlider.value) / 100,
+    // Read completed scenario state even while an input frame is pending.
+    getSeverity: () => activeScenario.severity,
+    getScenario: () => activeScenario,
     getSelection: () => currentSearch && {
       customer: currentSearch.nearest,
       distance: currentSearch.distance,
