@@ -8,6 +8,7 @@
   --ok: #15803d;
   --ok-bg: #ecfdf3;
   --sms-bg: #eef1f6;
+  --danger-bg: #fff1f1;
   /* RGB(A) channels shared by deck.gl layers and the map legend. */
   --map-overhead: 37, 99, 235;
   --map-underground: 22, 163, 74;
@@ -293,7 +294,7 @@ body {
   font-size: 0.75rem;
 }
 
-/* Storm severity slider and heatmap key, in the map's bottom-right corner
+/* Storm strength slider, repair conditions, and heatmap key, in the map's bottom-right corner
    (above Google's attribution line). */
 .storm-panel {
   position: absolute;
@@ -315,9 +316,29 @@ body {
   font-weight: 600;
 }
 
-#storm-severity {
+#storm-severity,
+#repair-crews {
   width: 100%;
   margin: 6px 0 2px;
+  accent-color: var(--accent);
+}
+
+/* Crew count and blocked roads: repair conditions for the same storm. */
+.repair-conditions {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.roads-blocked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.roads-blocked input {
   accent-color: var(--accent);
 }
 
@@ -485,6 +506,10 @@ body {
 /* Alert preview: the button in the chat bar and the card it produces. */
 .alerts-button {
   margin-left: auto;
+}
+
+.alerts-button,
+.person-button {
   padding: 8px 14px;
   font: inherit;
   font-weight: 600;
@@ -495,11 +520,13 @@ body {
   cursor: pointer;
 }
 
-.alerts-button:hover {
+.alerts-button:hover,
+.person-button:hover {
   background: var(--bg);
 }
 
-.alerts-button:focus-visible {
+.alerts-button:focus-visible,
+.person-button:focus-visible {
   outline: 3px solid var(--fg);
   outline-offset: 2px;
 }
@@ -590,7 +617,21 @@ body {
   margin: 10px 0 0;
 }
 
-@media (max-width: 520px) {
+/* Safety banner shown before the assistant's reply. */
+.chatbot-message.safety {
+  background: var(--danger-bg);
+  border: 2px solid var(--accent);
+}
+
+.chatbot-message.safety .person-button {
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .chat-view-bar {
+    flex-wrap: wrap;
+  }
+
   .chat-view-bar strong {
     display: none;
   }

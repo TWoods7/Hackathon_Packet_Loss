@@ -19,7 +19,8 @@ git show a3a4575:public/data/customers.json > data/extracted/customers.json
 Do not:
 - copy the full file back into `public/data/`, or point a data script at `public/data/customers.json`;
 - add premise, transformer, circuit, street, or life-support fields to anything under `public/`;
-- add device coordinates back to `grid.json` (`devices` is `type`, `circuit`, `customers` only): `customerChains[i][0]` is the customer's transformer, and many transformers serve one home, so their coordinates would reveal exact home locations;
+- add device coordinates back to `grid.json` (`devices` is `type`, `circuit`, `customers`, `priority` only): `customerChains[i][0]` is the customer's transformer, and many transformers serve one home, so their coordinates would reveal exact home locations;
+- name or locate priority locations (hospitals, stations) anywhere in the browser, the map, or tool results; `grid.devices.priority` is a count only, added by `add-priority-locations.js`;
 - show circuit IDs or other internal fields in the map UI or in assistant tool results (`src/assistantTools.js`).
 
 ## Row alignment

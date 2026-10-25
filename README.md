@@ -12,6 +12,10 @@ Packet Loss's **Chat AEP** is a HackOHIO 2026 outage-concierge prototype built w
 - Address search that matches the nearest customer node and refreshes its simulated status as the storm level changes.
 - An assistant that can change the storm level, read the same active scenario, explain risk, estimate repair ranges, evaluate alert eligibility, and draft customer notifications.
 - A **Preview my alerts** button in the chat that shows the four customer messages (before the storm, outage confirmed, estimate updated, power restored) with channels, send timing, escalation triggers, and a checkbox for declaring powered medical equipment.
+- **Repair crews** slider and **Roads blocked** checkbox in the storm panel. They change repair times (heatmap, outage-panel steps, search result, assistant ranges, alert messages) but never which equipment fails.
+- Confidence levels (high, medium, low) with a plain-language reason: high needs a close address match, recorded storm damage on the customer's lines, and a storm level that matches a real storm in the records.
+- Priority locations (hospitals, fire and ambulance stations) restored first, without naming or showing them.
+- An instant **safety banner** in the chat for downed lines, sparks, fire, generators, flooding, or medical emergencies, and a **Talk to a person** button that shows the summary a utility agent would receive.
 
 All outage results are model outputs, not live utility information. Address matching uses a nearby customer node as a proxy, not a verified service-account match. Repair ranges use labor and queue assumptions and are not official restoration deadlines or validated confidence intervals. The app drafts notifications; it does not send them.
 
@@ -81,7 +85,7 @@ Run commands from the repository root. None of the application commands rebuild 
 | `npm run build` | Compile the app page and copy public assets into `dist/` | No |
 | `npm run preview` | Serve the existing build with the local chat route | No |
 | `npm run data:customers -- "path/to/Customer_Clip"` | Replace the private customer JSON from a shapefile basename without `.shp` | Yes: customer source files |
-| `npm run data:grid` | Rebuild the public grid and aligned public customer locations | Yes |
+| `npm run data:grid` | Rebuild the public grid and aligned public customer locations, then mark devices that serve priority locations (`add-priority-locations.js`) | Yes |
 
 ```sh
 # Build the app, then serve the generated output locally.
@@ -126,7 +130,7 @@ Data is stored as JSON and GeoJSON files rather than a hosted database. The loca
 | `public/data/customers.json` | Customer longitude/latitude rounded to four decimal places, in grid row order |
 | `public/data/grid.json` | Devices, customer chains, failure candidates, labor inputs, historical damage, and calibration metadata |
 | `public/data/labor.json` | Labor reference values, indirect multiplier, and team repair recipes |
-| `public/data/hospitals.geojson` | Hospital export; not loaded as a layer by the current map |
+| `public/data/hospitals.geojson` | Hospital export; read by `add-priority-locations.js` at build time, never loaded by the map |
 
 The current snapshot has 117,642 customer rows. `grid.customerChains[i]` belongs to `customers.rows[i]`; an empty chain means missing upstream data. **Keep the public customer and grid files from the same build together.** `npm run data:grid` writes both from the full private customer file.
 
@@ -153,7 +157,7 @@ The original historical damage records remain in `grid.damages`; the current map
 
 Circles summarize geographic spread, not outage probability or damage density. Each outage is drawn as one circle per ~1 km grid cell that has affected customers (`OUTAGE_CELL_DEGREES` in `map.js`), so a long outage appears as a trail of small circles. Centers are coarsened, the minimum radius is 300 m, and each radius covers that cell's farthest affected customer plus 100 m. Unaffected locations may lie inside a circle. Use the selected location's network-based tool result, not apparent circle inclusion, to determine its simulated status.
 
-Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies and then prioritizes ready repairs by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever the storm level changes.
+Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies, then puts ready repairs that restore a priority location first, then prioritizes by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever the storm level changes.
 
 Step times describe elapsed work after the area's crew starts, with normal access. The assistant's planning range additionally considers declared access allowances and waiting for work elsewhere in the storm. It excludes the area's own labor from that outside backlog to avoid double counting. Crew count can change the modeled wait while the area's baseline one-crew sequence stays the same. `restorationRange()` and `sampledRestorationRange()` in `restorationModel.js` contain the duration formulas.
 
@@ -189,11 +193,17 @@ Searching a location opens the chat view over the loaded map. The browser posts 
 
 - `search_address` selects a nearby service node. `get_current_status` describes its sampled outage status, not its real electricity supply.
 - `set_storm_level` moves the slider to a named level (Claude matches the customer's words, such as "a thunderstorm" or "a hurricane") and updates the map and returns forecast expectations plus a separate sampled-outcome summary.
-- `get_outage_risk` reports forecast risk. `estimate_restoration` reports an assumption-based range when available and supports crew/access inputs.
+- `get_outage_risk` reports forecast risk. `estimate_restoration` reports an assumption-based range when available. Crews and access default to the storm panel's settings; Claude passes values only for a what-if.
 - `check_alert_eligibility` applies documented challenge rules and declared needs.
 - `draft_notifications` writes the four customer messages from the same numbers: the displayed sample's restoration range when this location has an outage, otherwise the storm forecast's range, and no times for calm weather or an unreliable match. The "estimate updated" example reruns the estimate with half the crews. Each message is labeled simulated and checked to fit in 320 characters. The **Preview my alerts** button calls it directly (no AI round trip), and the chat shows the same card when Claude calls it. Nothing is enrolled or sent.
 
 The prompt requires fresh tool reads for follow-up predictions, separation of sampled outcomes and expectations, and a fallback for unreliable matches. Customer-facing explanations appear under "How I got this". Tool results exclude premise IDs, coordinates, device IDs, circuit IDs, and life-support flags. Needs are declared by the customer rather than inferred from private records.
+
+**Confidence.** `confidenceFor()` in `assistantTools.js` returns low when there's no usable network match (no upstream data, or the address is over 500 m from a service point). Otherwise it's high only when all three hold: the address is within 150 m of a service point, the customer's lines have recorded storm damage (their failure weight is above the no-history baseline), and the storm level matches a real storm in the records (`observed` in `stormLevels.js`). Missing any of these gives medium, and the reason names what's missing.
+
+**Priority locations.** `scripts/dataBuildScripts/add-priority-locations.js` matches each hospital, fire station, and ambulance station to the nearest customer point with network data (within 300 m; 40 of 52 match, the rest are outside the service area) and stores a per-device count in `grid.devices.priority`. No facility names or coordinates reach the browser. Repairs on those devices go first in each outage's steps and near the front of the storm queue. The assistant says when a customer's repair also restores a priority location but never what or where it is, and the outage panel doesn't mark which step it is.
+
+**Safety and handoff.** `chatbot.js` checks every typed message against `SAFETY_RULES` and shows a red safety banner before the assistant replies, so the warning doesn't depend on the AI. Downed lines, sparks, fire, and medical emergencies are also flagged for a person. **Talk to a person** shows the summary an agent would receive (`handoffSummary()`: the customer's matched address, storm level, simulated status, restoration step and range, confidence, declared needs, and flagged reasons). It's simulated: no one is contacted.
 
 ## Demonstration and review
 
@@ -212,9 +222,10 @@ Counts can change with the dataset or seed. Expected forecast counts need not eq
 1. Start at Calm, then show Thunderstorm, Major storm, and Worst on record. Return to Major storm to show repeatability.
 2. Select a team-approved location with usable network data. Change the storm level and confirm that map counts, selected-location status, and fresh assistant tool responses agree.
 3. Tell the assistant "a hurricane is coming" and check that it picks Major storm. Return to the map to show that the same scenario changed.
-4. Compare the selected location's restoration step in the search result and assistant response. Ask for more crews or restricted access: repair estimates can change while sampled damage stays unchanged. Step times start when the area's crew begins; the range may also include waiting elsewhere.
+4. Compare the selected location's restoration step in the search result and assistant response. Move the **Repair crews** slider or tick **Roads blocked**: step times, the heatmap, and the assistant's range change while the sampled damage stays the same. Step times start when the area's crew begins; the range may also include waiting elsewhere.
 5. Ask for alert eligibility and a draft pre-storm notification. Explain the rules and show the draft without claiming it was sent.
 6. Ask whether the app can confirm real power status. It should explain the simulation limitation. An unreliable location match should trigger the documented fallback.
+7. Type "there's a downed line in my yard". The red safety banner appears before the assistant answers; then click **Talk to a person** to show the agent summary.
 
 The storm-level comparison demonstrates an adjustable scenario input. Review the challenge's other customer-journey requirements separately before claiming the whole submission is complete.
 

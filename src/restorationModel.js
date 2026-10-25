@@ -166,21 +166,24 @@ export function sampledRestorationRange({
 // ---------------------------------------------------------------------------
 
 // Order an outage's repairs the way crews restore power: a repair can't bring
-// anyone back until every repair upstream of it is done, and among the repairs
-// that are ready, the one serving the most customers per hour of work goes first.
+// anyone back until every repair upstream of it is done. Among the repairs that
+// are ready, one that restores a priority location (hospital, fire or ambulance
+// station) goes first, then the one serving the most customers per hour of work.
 // One crew works through them in turn.
-// jobs: [{ id, hours, served, after }], where served = customers whose line runs
-// through this repair and after = Set of job ids upstream of it.
+// jobs: [{ id, hours, served, after, priority }], where served = customers whose
+// line runs through this repair, after = Set of job ids upstream of it, and
+// priority = priority locations it restores (optional).
 // Returns the jobs in repair order, each with doneAfterHours from the start.
 export function restorationOrder(jobs) {
-  const priority = (job) => job.served / Math.max(job.hours, 0.1);
+  const rate = (job) => job.served / Math.max(job.hours, 0.1);
+  const first = (a, b) => ((b.priority > 0) !== (a.priority > 0) ? b.priority > 0 : rate(b) > rate(a));
   const done = new Set();
   const pending = [...jobs];
   const order = [];
   let clock = 0;
   while (pending.length) {
     const ready = pending.filter((job) => [...job.after].every((id) => done.has(id)));
-    const next = (ready.length ? ready : pending).reduce((a, b) => (priority(b) > priority(a) ? b : a));
+    const next = (ready.length ? ready : pending).reduce((a, b) => (first(a, b) ? b : a));
     pending.splice(pending.indexOf(next), 1);
     done.add(next.id);
     clock += next.hours;

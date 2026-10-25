@@ -74,8 +74,11 @@ function describeStorm(level) {
   };
 }
 
-// How much to trust predictions for this location, and why.
-function confidenceFor(customer, distance) {
+// How much to trust predictions for this location at a storm level, and why.
+// Low: no usable network match. High: a close match, recorded storm damage on
+// these lines, and a storm level that matches a real storm in the records.
+// Medium: usable, but missing one or more of those.
+function confidenceFor(customer, distance, level = mapApi.getStormLevel()) {
   const chain = mapApi.grid.customerChains[customer.index];
   if (!chain.length) return { level: "low", reason: "No network data links this location to the grid." };
   if (distance > MAX_MATCH_METERS) {
@@ -84,11 +87,34 @@ function confidenceFor(customer, distance) {
   if (!mapApi.forecastInputs.exposure[customer.index]) {
     return { level: "low", reason: "No storm damage history for the lines feeding this location." };
   }
-  if (distance > CLOSE_MATCH_METERS) {
-    return { level: "medium", reason: "The address matched a nearby service point, not an exact one." };
+
+  const gaps = [];
+  if (distance > CLOSE_MATCH_METERS) gaps.push("the address matched a nearby service point, not an exact one");
+  if (!mapApi.forecastInputs.hasHistory[customer.index]) {
+    gaps.push("the lines feeding this location have no recorded storm damage, so their risk uses an area-wide baseline");
   }
-  return { level: "medium", reason: "Uses historical damage patterns and assumed storm strength; actual outcomes vary." };
+  if (!level.observed) gaps.push(`a ${level.name.toLowerCase()} falls between the storms in the records, so it's estimated from them`);
+  if (!gaps.length) {
+    return {
+      level: "high",
+      reason: "Close address match, recorded storm damage on these lines, and a storm level that matches a real storm in the records. Real storms still vary.",
+    };
+  }
+  const reason = gaps.join("; ");
+  return { level: "medium", reason: reason[0].toUpperCase() + reason.slice(1) + "." };
 }
+
+// The map's crew count and blocked-roads setting, which tools use by default.
+function mapConditions() {
+  return mapApi.getRepairConditions?.() ?? { crews: CREWS, roadsBlocked: false };
+}
+
+// Whether a device's repair also restores a priority location (hospital, station).
+function servesPriority(device) {
+  return device >= 0 && (mapApi.grid.devices[device].priority ?? 0) > 0;
+}
+
+const PRIORITY_FACTOR = "also restores a priority location (such as a hospital or fire station), so crews do it before other repairs";
 
 // Plain-language risk band for a chance between 0 and 1.
 function riskBand(chance) {
@@ -122,7 +148,9 @@ function repairPlace(device, onYourLine) {
 // Active sampled outage, step by step: the repairs on this home's line in the order a
 // crew restores them (restorationOrder in restorationModel.js), and which step
 // brings this home back.
-function outageSteps(customer) {
+// accessClockHours: extra time per repair for blocked roads, added for every
+// repair the crew finishes up to each step (the same rule as the map panel).
+function outageSteps(customer, accessClockHours = 0) {
   const zone = mapApi.zoneByCustomer.get(customer.index);
   const yourStep = mapApi.stepOfCustomer?.[customer.index];
 
@@ -131,22 +159,29 @@ function outageSteps(customer) {
     throw new Error("Restoration-step information is unavailable for this scenario.");
   }
   const chain = mapApi.grid.customerChains[customer.index];
+  let repairsSoFar = 0;
+  const doneHours = zone.steps.map((step) => {
+    repairsSoFar += step.damages.length;
+    return step.doneAfterHours + accessClockHours * repairsSoFar;
+  });
   const steps = zone.steps.map((step, i) => ({
     step: i + 1,
     repair: `${repairPlace(step.device, chain.includes(step.device))} (${mapApi.damageSummary(step.damages)})`,
     on_your_line: chain.includes(step.device),
+    restores_priority_location: Boolean(step.priority),
     customers_back_after_this_step: roughCount(step.customersRestored),
-    hours_from_start: round1(step.doneAfterHours),
+    hours_from_start: round1(doneHours[i]),
   }));
-  const ownRepairs = steps.filter((s) => s.on_your_line);
+  const ownSteps = zone.steps.filter((s) => chain.includes(s.device));
   return {
     steps,
     your_step: yourStep + 1,
     total_steps: steps.length,
-    repairs_on_your_line: ownRepairs.length,
+    repairs_on_your_line: ownSteps.length,
+    your_repair_restores_priority_location: Boolean(zone.steps[yourStep].priority),
     // Hours if a crew went straight to this home's repairs and skipped the rest.
-    own_line_hours: zone.steps.filter((s) => chain.includes(s.device)).reduce((sum, s) => sum + s.hours, 0),
-    hours_until_your_step: zone.steps[yourStep].doneAfterHours,
+    own_line_hours: ownSteps.reduce((sum, s) => sum + s.hours + accessClockHours * s.damages.length, 0),
+    hours_until_your_step: doneHours[yourStep],
   };
 }
 
@@ -185,6 +220,43 @@ function stormSummary(forecast, level) {
     customers_likely_out: Math.round(forecast.customersOut / 100) * 100,
     typical_hours_without_power: round1(forecast.typicalHours),
     hours_for_all_crews_to_finish: round1(forecast.stormClearHours),
+    repair_conditions: repairConditionsSummary(),
+  };
+}
+
+// The storm panel's crews and roads, as tools report them.
+function repairConditionsSummary() {
+  const { crews, roadsBlocked } = mapConditions();
+  return { crews, roads_blocked: roadsBlocked };
+}
+
+// What a utility agent would see when the customer asks for a person: the
+// customer's own matched address and the model's results, no internal IDs.
+// safetyFlags: safety topics the chat detected, e.g. "downed line reported".
+export async function handoffSummary({ declared_needs, safety_flags }) {
+  const needs = declared_needs ?? [];
+  const summary = {
+    reasons: [
+      ...safety_flags,
+      ...(needs.length ? [`declared need: ${needs.join(", ").replaceAll("_", " ")}`] : []),
+    ],
+    declared_needs: needs,
+  };
+  const selected = mapApi && mapApi.getSelection();
+  if (!selected) return { ...summary, location: "not provided yet" };
+
+  const status = currentStatus(selected.customer);
+  const restoration = await handlers.estimate_restoration({ storm_level: null, crews: null, access_issue: null });
+  return {
+    ...summary,
+    location: selected.formattedAddress,
+    storm: mapApi.getStormLevel().name,
+    simulated_power: status.power,
+    restoration_step: status.restoration_step ?? null,
+    restoration_range_hours: restoration.low_hours != null
+      ? `${restoration.low_hours} to ${restoration.high_hours}, most likely ${restoration.typical_hours}`
+      : null,
+    confidence: confidenceFor(selected.customer, selected.distance).level,
   };
 }
 
@@ -193,7 +265,7 @@ function stormSummary(forecast, level) {
 function forecastRange(customer, severity, crewCount, accessLaborHours = 0) {
   const multiplier = mapApi.grid.meta.indirectLaborMultiplier;
   const ownRepair = repairClockHours(mapApi.forecastInputs.repairHours[customer.index] + accessLaborHours, multiplier);
-  const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount);
+  const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount, accessLaborHours);
   const range = restorationRange(ownRepair, forecast.stormClearHours, mapApi.forecastInputs.queueShare[customer.index]);
   return { ...range, forecast };
 }
@@ -258,32 +330,35 @@ export async function draftNotifications({ declared_needs }) {
   const eligibility = alertEligibility(customer, needs);
   const confidence = confidenceFor(customer, distance);
   const reliable = confidence.level !== "low";
+  // Use the storm panel's crews and roads, like the other tools.
+  const conditions = mapConditions();
+  const accessLaborHours = conditions.roadsBlocked ? (await loadLabor()).adders.restrictedAccess.hours : 0;
 
   // Current estimate: the displayed sample's outage if there is one here,
   // otherwise the storm forecast. None when calm or the match isn't reliable.
   let estimate = null;
   let estimateSource = "none";
   if (reliable) {
-    const sampled = await handlers.estimate_restoration({ storm_level: null, crews: null, access_issue: false });
+    const sampled = await handlers.estimate_restoration({ storm_level: null, crews: null, access_issue: null });
     if (sampled.low_hours != null) {
       estimate = { lowHours: sampled.low_hours, typicalHours: sampled.typical_hours, highHours: sampled.high_hours };
       estimateSource = "displayed sampled outage";
     } else if (severity > 0) {
-      estimate = forecastRange(customer, severity, CREWS);
+      estimate = forecastRange(customer, severity, conditions.crews, accessLaborHours);
       estimateSource = "storm forecast";
     }
   }
 
   // Example of a changed estimate: half the crews are sent to harder-hit areas.
-  const fewerCrews = Math.round(CREWS / 2);
+  const fewerCrews = Math.round(conditions.crews / 2);
   let updated = null;
   if (estimate) {
     const sampled = estimateSource === "displayed sampled outage"
-      ? await handlers.estimate_restoration({ storm_level: null, crews: fewerCrews, access_issue: false })
+      ? await handlers.estimate_restoration({ storm_level: null, crews: fewerCrews, access_issue: null })
       : null;
     updated = sampled?.low_hours != null
       ? { lowHours: sampled.low_hours, typicalHours: sampled.typical_hours, highHours: sampled.high_hours }
-      : forecastRange(customer, severity, fewerCrews);
+      : forecastRange(customer, severity, fewerCrews, accessLaborHours);
   }
 
   const band = severity > 0 && reliable
@@ -331,7 +406,7 @@ export async function draftNotifications({ declared_needs }) {
     ...eligibility,
     ...describeStorm(mapApi.getStormLevel()),
     estimate_source: estimateSource,
-    estimate_update_example: updated ? `same storm with ${fewerCrews} crews instead of ${CREWS}` : null,
+    estimate_update_example: updated ? `same storm with ${fewerCrews} crews instead of ${conditions.crews}` : null,
     confidence: confidence.level,
     messages,
     note: (reliable
@@ -364,6 +439,7 @@ const handlers = {
       ...currentStatus(selected.customer),
       ...describeStorm(mapApi.getStormLevel()),
       is_calm: mapApi.getSeverity() === 0,
+      repair_conditions: repairConditionsSummary(),
       confidence: confidenceFor(selected.customer, selected.distance).level,
       note: NOTE,
     };
@@ -391,7 +467,7 @@ const handlers = {
     const { customer, distance } = selected;
     const level = levelFrom(storm_level);
     const severity = severityOf(level);
-    const confidence = confidenceFor(customer, distance);
+    const confidence = confidenceFor(customer, distance, level);
     if (severity === 0) {
       return {
         ...describeStorm(level),
@@ -431,10 +507,13 @@ const handlers = {
     const { customer, distance } = selected;
     const level = levelFrom(storm_level);
     const severity = severityOf(level);
-    const crewCount = crews == null ? CREWS : clamp(crews, 10, 200);
+    // Crews and access default to the map's storm panel settings.
+    const conditions = mapConditions();
+    const crewCount = crews == null ? conditions.crews : clamp(crews, 10, 200);
+    const roadsBlocked = access_issue ?? conditions.roadsBlocked;
     const { adders } = await loadLabor();
     const multiplier = mapApi.grid.meta.indirectLaborMultiplier;
-    const confidence = confidenceFor(customer, distance);
+    const confidence = confidenceFor(customer, distance, level);
 
     // A distant or disconnected match cannot support a restoration prediction.
     if (!mapApi.grid.customerChains[customer.index].length || distance > MAX_MATCH_METERS) {
@@ -442,7 +521,7 @@ const handlers = {
     }
 
     // These inputs change repair duration without changing the failure sample.
-    const accessLaborHours = access_issue ? adders.restrictedAccess.hours : 0;
+    const accessLaborHours = roadsBlocked ? adders.restrictedAccess.hours : 0;
     const share = mapApi.forecastInputs.queueShare[customer.index];
     const active = mapApi.getScenario();
 
@@ -458,16 +537,17 @@ const handlers = {
       }
 
       // Sum labor inputs, then let the shared model handle all time formulas.
-      const plan = outageSteps(customer);
-      const zoneLaborHours = zone.damages.reduce((sum, damage) => sum + damage.directHours, 0);
-      const stormLaborHours = active.damages.reduce((sum, damage) => sum + damage.directHours, 0);
+      // Step times already include the access allowance, so it isn't added again.
+      const plan = outageSteps(customer, repairClockHours(accessLaborHours, multiplier));
+      const zoneLaborHours = zone.damages.reduce((sum, damage) => sum + damage.directHours + accessLaborHours, 0);
+      const stormLaborHours = active.damages.reduce((sum, damage) => sum + damage.directHours + accessLaborHours, 0);
       const range = sampledRestorationRange({
         ownLineHours: plan.own_line_hours,
         stepHours: plan.hours_until_your_step,
         zoneLaborHours,
         stormLaborHours,
         repairsOnLine: plan.repairs_on_your_line,
-        accessLaborHours,
+        accessLaborHours: 0,
         multiplier,
         crews: crewCount,
         queueShare: share,
@@ -478,6 +558,7 @@ const handlers = {
         scenario: "displayed sampled storm outcome",
         outage_simulated: true,
         crews: crewCount,
+        roads_blocked: roadsBlocked,
         low_hours: round1(range.lowHours),
         typical_hours: round1(range.typicalHours),
         high_hours: round1(range.highHours),
@@ -492,9 +573,10 @@ const handlers = {
           `This location is restored at step ${plan.your_step} of ${plan.total_steps} in the area's assumed single-crew schedule.`,
           `Step times start when the area's crew begins work; the duration range also allows for work elsewhere in the storm with ${crewCount} crews of ${CREW_SIZE}.`,
           "The area's own work is excluded from that outside backlog to avoid double counting it.",
-          access_issue ? "Includes the declared restricted-access allowance for each repair on the selected line." : "Assumes normal access.",
+          ...(plan.your_repair_restores_priority_location ? [`The repair that brings this location back ${PRIORITY_FACTOR}.`] : []),
+          roadsBlocked ? "Includes extra time for every repair because roads are blocked." : "Assumes crews can reach the damage normally.",
         ],
-        note: "Step times use one crew and normal access as a baseline. The range adds access and queue assumptions; it is not a statistical confidence interval. " + NOTE,
+        note: "Step times use one crew. The range adds queue assumptions; it is not a statistical confidence interval. " + NOTE,
       };
     }
 
@@ -514,6 +596,7 @@ const handlers = {
       scenario: `hypothetical forecast for a ${level.name.toLowerCase()}`,
       ...describeStorm(level),
       crews: crewCount,
+      roads_blocked: roadsBlocked,
       low_hours: round1(range.lowHours),
       typical_hours: round1(range.typicalHours),
       high_hours: round1(range.highHours),
@@ -523,10 +606,13 @@ const handlers = {
       confidence_reason: confidence.reason,
       factors: [
         "Uses expected work and repair-queue position, rather than the displayed sample's damage list.",
-        lastDevice >= 0
-          ? `The last at-risk repair on this line serves ${roughCount(mapApi.grid.devices[lastDevice].customers)} customers, putting it ${queuePlace(share)} of the assumed queue.`
-          : "Assumes the middle of the repair queue because no at-risk device is identified.",
+        servesPriority(lastDevice)
+          ? `The last repair this line would need ${PRIORITY_FACTOR}, putting it ${queuePlace(share)} of the assumed queue.`
+          : lastDevice >= 0
+            ? `The last at-risk repair on this line serves ${roughCount(mapApi.grid.devices[lastDevice].customers)} customers, putting it ${queuePlace(share)} of the assumed queue.`
+            : "Assumes the middle of the repair queue because no at-risk device is identified.",
         "Expected repairs on the line are an explanatory model estimate, not a list of confirmed damage.",
+        roadsBlocked ? "Includes extra time for every repair because roads are blocked." : "Assumes crews can reach the damage normally.",
       ],
       note: "The displayed map scenario has not been changed. This is an assumption-based planning range. " + NOTE,
     };

@@ -86,7 +86,10 @@ function restorationSteps(grid, zone, multiplier, stepOfCustomer) {
   const jobs = new Map();
   for (const damage of zone.damages) {
     if (!jobs.has(damage.device)) {
-      jobs.set(damage.device, { id: damage.device, damages: [], laborHours: 0, served: 0, restores: [], after: new Set() });
+      jobs.set(damage.device, {
+        id: damage.device, damages: [], laborHours: 0, served: 0, restores: [], after: new Set(),
+        priority: grid.devices[damage.device].priority ?? 0,
+      });
     }
     const job = jobs.get(damage.device);
     job.damages.push(damage);
@@ -113,6 +116,7 @@ function restorationSteps(grid, zone, multiplier, stepOfCustomer) {
       hours: job.hours,
       doneAfterHours: job.doneAfterHours,
       customersRestored: job.restores.length,
+      priority: job.priority > 0,
     };
   });
 }
@@ -122,21 +126,31 @@ function restorationSteps(grid, zone, multiplier, stepOfCustomer) {
 // The formulas themselves live in restorationModel.js.
 // ---------------------------------------------------------------------------
 
+// Candidate weights are a circuit's historical damage rate plus this floor
+// (half for service poles; see build-outage-grid.js). A weight at the floor
+// means the circuit had no recorded storm damage, so its risk is a baseline.
+const BASELINE_WEIGHTS = [0.0005, 0.00025];
+const isBaseline = (weight) => BASELINE_WEIGHTS.some((floor) => Math.abs(weight - floor) < 1e-7);
+
 // Precompute per-customer totals once; the slider then only rescales them.
 export function prepareForecast(grid) {
   // Per device: summed failure weight of the poles behind it, and weighted repair hours.
   const deviceWeight = new Float64Array(grid.devices.length);
   const deviceWeightedHours = new Float64Array(grid.devices.length);
+  const deviceHistory = new Uint8Array(grid.devices.length);
   for (const [, , device, weight, hours] of grid.candidates) {
     deviceWeight[device] += weight;
     deviceWeightedHours[device] += weight * hours;
+    if (!isBaseline(weight)) deviceHistory[device] = 1;
   }
 
-  // Storm queue: crews fix repairs that restore the most customers first. A
-  // device's queue share is how far through the storm's repair work crews are,
-  // on average, when they reach it.
+  // Storm queue: crews fix repairs that restore priority locations first, then
+  // those that restore the most customers (the same rule as restorationOrder).
+  // A device's queue share is how far through the storm's repair work crews
+  // are, on average, when they reach it.
+  const isPriority = (d) => (grid.devices[d].priority ?? 0) > 0;
   const atRisk = [...deviceWeight.keys()].filter((d) => deviceWeight[d] > 0);
-  atRisk.sort((a, b) => grid.devices[b].customers - grid.devices[a].customers);
+  atRisk.sort((a, b) => isPriority(b) - isPriority(a) || grid.devices[b].customers - grid.devices[a].customers);
   const totalWork = atRisk.reduce((sum, d) => sum + deviceWeightedHours[d], 0);
   const deviceQueueShare = new Float64Array(grid.devices.length);
   let workBefore = 0;
@@ -152,7 +166,10 @@ export function prepareForecast(grid) {
   // The most downstream device on the line that can fail (-1 if none), and its queue share.
   const lastRepairDevice = new Int32Array(customers).fill(-1);
   const queueShare = new Float64Array(customers).fill(0.5);
+  // 1 if the lines feeding this customer have recorded storm damage.
+  const hasHistory = new Uint8Array(customers);
   grid.customerChains.forEach((chain, i) => {
+    hasHistory[i] = chain.some((device) => deviceHistory[device]) ? 1 : 0;
     let weight = 0;
     let weightedHours = 0;
     for (const device of chain) {
@@ -169,12 +186,14 @@ export function prepareForecast(grid) {
     }
   });
 
-  return { exposure, repairHours, lastRepairDevice, queueShare };
+  return { exposure, repairHours, lastRepairDevice, queueShare, hasHistory };
 }
 
 // Forecast outages for a storm severity from 0 (calm) to 1 (the worst storm in the data).
 // crews: optional repair-crew count; defaults to CREWS in restorationModel.js.
-export function stormForecast(grid, prepared, severity, crews) {
+// accessLaborHours: extra labor per repair when crews can't reach damage easily
+// (blocked roads); the map's checkbox and the chatbot set it.
+export function stormForecast(grid, prepared, severity, crews, accessLaborHours = 0) {
   const customers = grid.customerChains.length;
   const expectedHours = new Float32Array(customers);
   const result = { severity, scale: 0, expectedHours, brokenPoles: 0, customersOut: 0, typicalHours: 0, stormClearHours: 0 };
@@ -198,7 +217,7 @@ export function stormForecast(grid, prepared, severity, crews) {
   // Total clock time of every expected repair, then how long all crews need for it.
   const multiplier = grid.meta.indirectLaborMultiplier;
   const totalClockHours = grid.candidates.reduce(
-    (sum, row) => sum + failureChance(scale, row[3]) * repairClockHours(row[4], multiplier),
+    (sum, row) => sum + failureChance(scale, row[3]) * repairClockHours(row[4] + accessLaborHours, multiplier),
     0,
   );
   const clearHours = stormClearHours(totalClockHours, crews);
@@ -208,7 +227,7 @@ export function stormForecast(grid, prepared, severity, crews) {
   for (let i = 0; i < customers; i++) {
     const chanceOut = failureChance(scale, prepared.exposure[i]);
     const hoursIfOut = hoursWithoutPower(
-      repairClockHours(prepared.repairHours[i], multiplier),
+      repairClockHours(prepared.repairHours[i] + accessLaborHours, multiplier),
       clearHours,
       prepared.queueShare[i],
     );

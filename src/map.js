@@ -5,7 +5,7 @@ import {
   loadGrid,
   prepareForecast,
 } from "./outages.js";
-import { CREWS, CREW_SIZE } from "./restorationModel.js";
+import { CREWS, CREW_SIZE, repairClockHours } from "./restorationModel.js";
 import { registerMapApi } from "./assistantTools.js";
 import { STORM_LEVELS, levelSeverity, levelLineDamage } from "./stormLevels.js";
 // Use the tested sampler and outage calculations as one source of scenario state.
@@ -185,14 +185,26 @@ function roughCustomers(n) {
 
 // Title and multi-line text for an outage's side panel.
 // Life-support counts and circuit IDs stay out: they are internal or could identify a household.
-function outageDetails(zone, device, devices) {
+// Clock hours until a restoration step finishes, adding the blocked-roads
+// allowance (accessClockHours) for every repair up to and including it.
+function stepDoneHours(zone, stepIndex, accessClockHours) {
+  let repairs = 0;
+  for (let i = 0; i <= stepIndex; i++) repairs += zone.steps[i].damages.length;
+  return zone.steps[stepIndex].doneAfterHours + accessClockHours * repairs;
+}
+
+// accessClockHours: extra time per repair when roads are blocked (0 otherwise).
+// Steps that restore a priority location aren't marked, so the panel can't
+// point at a hospital or station; the heading explains the rule instead.
+function outageDetails(zone, device, devices, accessClockHours) {
   const steps = zone.steps.length > 1
     ? [
       "",
-      "Restoration steps (one crew, repairs closer to the substation first):",
+      "Restoration steps (one crew; repairs closer to the substation first, and repairs that restore " +
+        "priority locations such as hospitals before others" + (accessClockHours ? "; includes extra time for blocked roads" : "") + "):",
       ...zone.steps.map((step, i) =>
         `${i + 1}. ${devices[step.device].type} repair (${damageSummary(step.damages)}): ` +
-        `${roughCustomers(step.customersRestored)} customers back in ${formatHours(step.doneAfterHours)}`),
+        `${roughCustomers(step.customersRestored)} customers back in ${formatHours(stepDoneHours(zone, i, accessClockHours))}`),
     ]
     : [];
   return {
@@ -247,7 +259,6 @@ function setupHullPanel(mapEl, onSelectionChange) {
 
   // Show this hull's matching data, or close the panel if it is already selected.
   const toggleHullPanel = (hullId, details) => {
-    console.log("clicked");
     if (selectedHullId !== hullId) {
       title.textContent = String(details.title ?? "");
       text.textContent = String(details.text ?? "");
@@ -361,11 +372,19 @@ async function initMap() {
     return;
   }
 
-  const [customers, grid] = await Promise.all([
+  const [customers, grid, labor] = await Promise.all([
     loadCustomers(),
     loadGrid(),
+    fetch("/data/labor.json").then((res) => res.json()),
     loadGoogleMaps(apiKey),
   ]);
+
+  // Repair conditions from the storm panel's crew slider and blocked-roads box.
+  // They change repair times, never which equipment fails.
+  const repairConditions = { crews: CREWS, roadsBlocked: false };
+  const accessLaborHours = () => (repairConditions.roadsBlocked ? labor.adders.restrictedAccess.hours : 0);
+  const accessClockHours = () => repairClockHours(accessLaborHours(), grid.meta.indirectLaborMultiplier);
+  const scenarioConditions = () => ({ crews: repairConditions.crews, accessLaborHours: accessLaborHours() });
   // Renamed so `new Map()` below still means JavaScript's built-in Map.
   const { Map: GoogleMap, InfoWindow } = await google.maps.importLibrary("maps");
   const { Geocoder } = await google.maps.importLibrary("geocoding");
@@ -466,6 +485,7 @@ async function initMap() {
         zone,
         grid.devices[zone.device],
         grid.devices,
+        accessClockHours(),
       );
 
       // Register this circle for hover and selection handling.
@@ -563,9 +583,12 @@ async function initMap() {
   const heatLegend = document.getElementById("heat-legend");
   const worst = grid.meta.worstStorm;
   stormSlider.max = String(STORM_LEVELS.length - 1);
-  document.getElementById("storm-assumptions").textContent =
-    "Storm strength is measured by expected broken poles and wires, compared with storms in this area's " +
-    `2022-2026 damage reports. Assumes ${CREWS} crews of ${CREW_SIZE}. Outcomes vary between scenarios.`;
+  const stormAssumptions = document.getElementById("storm-assumptions");
+  const crewSlider = document.getElementById("repair-crews");
+  const crewValue = document.getElementById("crews-value");
+  const roadsBlockedBox = document.getElementById("roads-blocked");
+  crewSlider.value = String(CREWS);
+  roadsBlockedBox.checked = false;
   // The level the displayed scenario was built for.
   let activeLevel = STORM_LEVELS[0];
 
@@ -577,7 +600,7 @@ async function initMap() {
     // Build successfully before replacing the currently displayed scenario.
     const level = STORM_LEVELS[Number(stormSlider.value)];
     const severity = levelSeverity(level, worst);
-    const nextScenario = buildStormScenario(grid, forecastInputs, severity, scenarioSeed);
+    const nextScenario = buildStormScenario(grid, forecastInputs, severity, scenarioSeed, scenarioConditions());
     activeLevel = level;
 
     // A selected circle or open marker popup belongs to the previous outcome.
@@ -613,6 +636,12 @@ async function initMap() {
       `${summary.zones} outage areas · ${summary.damages} simulated damage locations`;
 
     stormValue.textContent = level.name;
+    crewValue.textContent = `${repairConditions.crews} crews`;
+    stormAssumptions.textContent =
+      "Storm strength is measured by expected broken poles and wires, compared with storms in this area's " +
+      `2022-2026 damage reports. Assumes ${repairConditions.crews} crews of ${CREW_SIZE}` +
+      (repairConditions.roadsBlocked ? ", with extra time per repair for blocked roads" : "") +
+      ". Crews and roads change repair times, not which equipment fails. Outcomes vary between scenarios.";
     stormSlider.setAttribute("aria-valuetext", level.name);
     heatLegend.hidden = severity === 0;
 
@@ -627,6 +656,15 @@ async function initMap() {
   };
   stormSlider.value = "0";
   stormSlider.addEventListener("input", () => {
+    if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
+  });
+  // Crew and road changes rebuild the same storm with new repair times.
+  crewSlider.addEventListener("input", () => {
+    repairConditions.crews = Number(crewSlider.value);
+    if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
+  });
+  roadsBlockedBox.addEventListener("change", () => {
+    repairConditions.roadsBlocked = roadsBlockedBox.checked;
     if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
   });
   // Move the slider from code (the chatbot) to a level id and redraw right away.
@@ -653,7 +691,7 @@ async function initMap() {
 
     // Describe modeled elapsed time from the start of repair work.
     const restore = restorationStep
-      ? ` Modeled restoration: step ${stepIndex + 1} of ${zone.steps.length}, ${formatHours(restorationStep.doneAfterHours)} after repair work starts with one crew.`
+      ? ` Modeled restoration: step ${stepIndex + 1} of ${zone.steps.length}, ${formatHours(stepDoneHours(zone, stepIndex, accessClockHours()))} after repair work starts with one crew.`
       : " Restoration-step information is unavailable.";
 
     // Keep simulated status, repair effort, and elapsed time distinguishable.
@@ -740,6 +778,7 @@ async function initMap() {
     searchAddress,
     setStormLevel,
     getStormLevel: () => activeLevel,
+    getRepairConditions: () => ({ ...repairConditions }),
     // Read completed scenario state even while an input frame is pending.
     getSeverity: () => activeScenario.severity,
     getScenario: () => activeScenario,

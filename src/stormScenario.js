@@ -20,11 +20,14 @@ import { crewHours } from "./restorationModel.js";
 // prepared: the result of prepareForecast(grid).
 // severity: a fraction from 0 to 1, such as 0.5 for 50%.
 // seed: identifies the repeatable damage scenario.
+// conditions: { crews, accessLaborHours } for the forecast's repair times.
+// They don't change which assets fail, only how long repairs take.
 export function buildStormScenario(
   grid,
   prepared,
   severity,
   seed = 2026,
+  conditions = {},
 ) {
   // Reject percentages such as 50, which should instead be supplied as 0.5.
   if (
@@ -38,7 +41,7 @@ export function buildStormScenario(
   }
 
   // Calculate the expected forecast and its calibrated storm strength.
-  const forecast = stormForecast(grid, prepared, severity);
+  const forecast = stormForecast(grid, prepared, severity, conditions.crews, conditions.accessLaborHours);
 
   // Generate one damage outcome using that same storm strength.
   const damages = simulateStormDamage(

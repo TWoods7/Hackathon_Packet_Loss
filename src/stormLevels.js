@@ -10,20 +10,22 @@
 // Ordinary thunderstorm days in the reports break 7-16 poles and wires.
 // Levels are spaced so everyday storms get their own stops instead of being
 // squeezed into the first few percent of a linear scale.
+// observed: the level matches a storm in the reports (the others sit between
+// them), which the assistant uses as one confidence signal.
 // Plain JavaScript (no browser or Node APIs): server/prompt.js imports it too.
 
 export const STORM_LEVELS = [
-  { id: "calm", name: "Calm", lineDamage: 0, like: "ordinary weather, including light rain" },
-  { id: "light_thunderstorm", name: "Light thunderstorm", lineDamage: 5, like: "a passing thunderstorm" },
-  { id: "thunderstorm", name: "Thunderstorm", lineDamage: 10, like: "a typical storm day, such as May 27, 2024" },
-  { id: "strong_thunderstorm", name: "Strong thunderstorm", lineDamage: 16, like: "the April 12, 2024 storm" },
-  { id: "winter_storm", name: "Winter storm", lineDamage: 33, like: "the January 6-7, 2025 snow and ice storm" },
-  { id: "severe_storm", name: "Severe storm", lineDamage: 75, like: "a storm with about twice the damage of the January 2025 winter storm" },
-  { id: "major_storm", name: "Major storm", lineDamage: 157, like: "the remnants of Hurricane Helene, Sept. 27 - Oct. 2, 2024" },
-  { id: "very_severe_storm", name: "Very severe storm", lineDamage: 300, like: "a storm with about twice the damage Helene caused here" },
-  { id: "extreme_storm", name: "Extreme storm", lineDamage: 550, like: "a storm with more than three times the damage Helene caused here" },
+  { id: "calm", name: "Calm", lineDamage: 0, observed: true, like: "ordinary weather, including light rain" },
+  { id: "light_thunderstorm", name: "Light thunderstorm", lineDamage: 5, observed: false, like: "a passing thunderstorm" },
+  { id: "thunderstorm", name: "Thunderstorm", lineDamage: 10, observed: true, like: "a typical storm day, such as May 27, 2024" },
+  { id: "strong_thunderstorm", name: "Strong thunderstorm", lineDamage: 16, observed: true, like: "the April 12, 2024 storm" },
+  { id: "winter_storm", name: "Winter storm", lineDamage: 33, observed: true, like: "the January 6-7, 2025 snow and ice storm" },
+  { id: "severe_storm", name: "Severe storm", lineDamage: 75, observed: false, like: "a storm with about twice the damage of the January 2025 winter storm" },
+  { id: "major_storm", name: "Major storm", lineDamage: 157, observed: true, like: "the remnants of Hurricane Helene, Sept. 27 - Oct. 2, 2024" },
+  { id: "very_severe_storm", name: "Very severe storm", lineDamage: 300, observed: false, like: "a storm with about twice the damage Helene caused here" },
+  { id: "extreme_storm", name: "Extreme storm", lineDamage: 550, observed: false, like: "a storm with more than three times the damage Helene caused here" },
   // null: always the worst storm in the loaded data (grid.meta.worstStorm).
-  { id: "worst_on_record", name: "Worst on record", lineDamage: null, like: "the February 12-17, 2025 storms (ice, flooding, and high winds)" },
+  { id: "worst_on_record", name: "Worst on record", lineDamage: null, observed: true, like: "the February 12-17, 2025 storms (ice, flooding, and high winds)" },
 ];
 
 export const STORM_LEVEL_IDS = STORM_LEVELS.map((level) => level.id);
