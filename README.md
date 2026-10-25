@@ -295,7 +295,99 @@ If changing the customer source, the customer builder reads `.shp` and `.dbf` fi
 
 ### Rebuild from the original GIS sources
 
-Obtain the organizer's source package, including shapefile companion files and `matched_upstream.txt`. For GIS exports, use QGIS/GDAL. The batch exporter is configured for Windows and accepts `QGIS_BIN` and `QGIS_DATA_ROOT` environment variables; its defaults are QGIS 3.44.15's `bin` directory and a `Hackathon Data` folder beside this repository, containing `Data1/` and `Data2/`. Configure GDAL/PROJ resources for your installation as needed.
+This section is optional. A fresh clone already includes the browser datasets
+needed to run the current app. Follow these instructions only when rebuilding
+the data pipeline.
+
+The original datasets come from the organizer's repository:
+[AEP HackOHI/O 2026 challenge](https://github.com/hackohio/aep_challenge_hack26).
+
+That repository contains three source archives under `data/raw/`:
+
+- `Data1.zip`
+- `Data2.zip`
+- `matched_upstream.zip`
+
+The GIS exporter expects an extracted source folder named `Hackathon Data`
+beside this project. This folder is external to this repository and is not
+created when someone clones our app.
+
+From the root of `Hackathon_Packet_Loss`, run the following commands in
+Windows PowerShell. These are first-time setup instructions; skip cloning
+or extracting anything you already have.
+
+```powershell
+# Locate this project and its parent folder.
+$projectRoot = (Get-Location).Path
+$parentFolder = Split-Path -Parent $projectRoot
+
+# Choose sibling folders for the organizer's repository and extracted data.
+$sourceRepo = Join-Path $parentFolder "aep_challenge_hack26"
+$dataRoot = Join-Path $parentFolder "Hackathon Data"
+
+# Download the organizer's repository, including the raw ZIP archives.
+git clone https://github.com/hackohio/aep_challenge_hack26.git "$sourceRepo"
+
+# Create the extracted-source folder and our ignored working-output folder.
+New-Item -ItemType Directory -Force -Path $dataRoot, "data/extracted" | Out-Null
+
+# Extract each archive into its own source subfolder.
+Expand-Archive -LiteralPath "$sourceRepo/data/raw/Data1.zip" -DestinationPath "$dataRoot/Data1"
+Expand-Archive -LiteralPath "$sourceRepo/data/raw/Data2.zip" -DestinationPath "$dataRoot/Data2"
+Expand-Archive -LiteralPath "$sourceRepo/data/raw/matched_upstream.zip" -DestinationPath "$dataRoot/Matched_Upstream"
+
+# Tell the batch exporter where these extracted sources are located.
+$env:QGIS_DATA_ROOT = $dataRoot
+```
+
+The resulting layout should be:
+
+```text
+parent-folder/
+├── Hackathon_Packet_Loss/
+│   ├── scripts/
+│   └── data/extracted/
+├── aep_challenge_hack26/
+│   └── data/raw/
+│       ├── Data1.zip
+│       ├── Data2.zip
+│       └── matched_upstream.zip
+└── Hackathon Data/
+    ├── Data1/
+    │   ├── Customer_Clip.shp
+    │   └── other shapefiles and companion files...
+    ├── Data2/
+    │   ├── Transformer_Clip.shp
+    │   └── other shapefiles and companion files...
+    └── Matched_Upstream/
+        └── matched_upstream.txt
+```
+
+Keep all shapefile companion files together, including `.shp`, `.shx`,
+`.dbf`, and `.prj`.
+
+You do not need to rename the organizer's repository or its `raw` folder.
+`Hackathon Data` is the separate folder containing the extracted files.
+
+If you already extracted the files elsewhere, either arrange them in the
+layout above or set `QGIS_DATA_ROOT` to that existing folder:
+
+```powershell
+# Replace this example with the folder directly containing Data1 and Data2.
+$env:QGIS_DATA_ROOT = "C:\path\to\your\extracted-source-folder"
+```
+
+The folder can have any name when `QGIS_DATA_ROOT` is set. Without that
+variable, the exporter looks for `../Hackathon Data`.
+
+GIS exports also require QGIS/GDAL. The Windows exporter defaults to
+`C:/Program Files/QGIS 3.44.15/bin`. If your installation differs, set
+`QGIS_BIN` to its actual `bin` folder. Configure GDAL/PROJ resources for your
+installation as needed.
+
+PowerShell environment variables apply to the current terminal session.
+Set them again after opening a new terminal. These standalone Node scripts
+do not automatically load them from `.env`.
 
 Create `data/extracted/` and export these prerequisites with all features and original attribute fields, EPSG:4326 coordinates, and XY geometry:
 
@@ -305,7 +397,24 @@ Create `data/extracted/` and export these prerequisites with all features and or
 | `Data2/Recloser_Bank_Clip` | `reclosers.geojson` | 331 |
 | `Data1/Fuse_Bank_Clip` | `fuses.geojson` | 7,616 |
 
-Copy the supplied upstream TXT to `data/extracted/matched_upstream.txt`. Build the full customer file with `npm run data:customers` (or restore the team's `data/extracted/customers.json` from the same source package). Then run the pipeline from the repository root, stopping to resolve any failed command:
+After completing the prerequisite GeoJSON exports above, run these commands
+from the project root in the same PowerShell session:
+
+```powershell
+# Copy the upstream relationship file into the ignored working directory.
+Copy-Item -LiteralPath "$env:QGIS_DATA_ROOT/Matched_Upstream/matched_upstream.txt" -Destination "data/extracted/matched_upstream.txt"
+
+# Build the full private customer file from the source shapefile basename.
+# Supply the path without the .shp extension.
+npm.cmd run data:customers -- "$env:QGIS_DATA_ROOT/Data1/Customer_Clip"
+```
+
+The customer builder requires longitude/latitude coordinates and does not
+reproject its input. Its full output stays in
+`data/extracted/customers.json`; do not copy it into `public/`.
+
+Then run the pipeline below from the repository root, stopping to resolve
+any failed command:
 
 ```sh
 # Export the seven remaining GIS layers and validate their counts.
