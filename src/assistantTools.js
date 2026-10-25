@@ -8,6 +8,7 @@ import {
   CREWS, CREW_SIZE, failureChance, repairClockHours,
   expectedRepairsOnPath, restorationRange, sampledRestorationRange,
 } from "./restorationModel.js";
+import { stormLevel, levelSeverity, levelLineDamage } from "./stormLevels.js";
 
 // Filled in by map.js once the map and data have loaded.
 let mapApi = null;
@@ -51,9 +52,26 @@ function selection() {
   return selected;
 }
 
-// Severity 0-1 from a tool's percent argument, or the slider's current value.
-function severityFrom(percent) {
-  return percent == null ? mapApi.getSeverity() : clamp(percent, 0, 100) / 100;
+// The storm level a tool asked for (an id from stormLevels.js), or the slider's.
+function levelFrom(id) {
+  if (id == null) return mapApi.getStormLevel();
+  const level = stormLevel(id);
+  if (!level) throw new Error(`Unknown storm level: ${id}`);
+  return level;
+}
+
+// Forecast severity (0-1) for a level.
+function severityOf(level) {
+  return levelSeverity(level, mapApi.grid.meta.worstStorm);
+}
+
+// How a storm level is described to the customer: a name and a real storm it's like.
+function describeStorm(level) {
+  return {
+    storm_level: level.name,
+    like: level.like,
+    expected_broken_poles_and_wires: levelLineDamage(level, mapApi.grid.meta.worstStorm),
+  };
 }
 
 // How much to trust predictions for this location, and why.
@@ -160,14 +178,166 @@ function queuePlace(share) {
 }
 
 // Area-wide summary of a storm forecast.
-function stormSummary(forecast) {
-  if (forecast.severity === 0) return { severity_percent: 0, summary: "Calm weather: no storm damage expected." };
+function stormSummary(forecast, level) {
+  if (forecast.severity === 0) return { ...describeStorm(level), summary: "Calm weather: no storm damage expected." };
   return {
-    severity_percent: Math.round(forecast.severity * 100),
-    broken_poles_and_wires: Math.round(forecast.brokenPoles),
+    ...describeStorm(level),
     customers_likely_out: Math.round(forecast.customersOut / 100) * 100,
     typical_hours_without_power: round1(forecast.typicalHours),
     hours_for_all_crews_to_finish: round1(forecast.stormClearHours),
+  };
+}
+
+// Planning range from the storm's expected work, for any severity. Used when
+// the displayed sample has no outage at this location, or for a what-if.
+function forecastRange(customer, severity, crewCount, accessLaborHours = 0) {
+  const multiplier = mapApi.grid.meta.indirectLaborMultiplier;
+  const ownRepair = repairClockHours(mapApi.forecastInputs.repairHours[customer.index] + accessLaborHours, multiplier);
+  const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount);
+  const range = restorationRange(ownRepair, forecast.stormClearHours, mapApi.forecastInputs.queueShare[customer.index]);
+  return { ...range, forecast };
+}
+
+// Alert eligibility under the documented rules (alert_rules in server/prompt.js).
+function alertEligibility(customer, needs) {
+  const severity = mapApi.getSeverity();
+  const reasons = [];
+  if (severity > 0) {
+    const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity);
+    const band = riskBand(failureChance(forecast.scale, mapApi.forecastInputs.exposure[customer.index]));
+    if (band !== "Low") reasons.push(`Outage risk is ${band} for the current storm forecast.`);
+  }
+  if (mapApi.zoneByCustomer.has(customer.index)) reasons.push("An outage was generated for this location in the displayed storm scenario.");
+  if (needs.length) reasons.push(`Customer declared: ${needs.join(", ").replaceAll("_", " ")}.`);
+
+  const priority = needs.length > 0;
+  return {
+    eligible: reasons.length > 0,
+    reasons: reasons.length ? reasons : ["Risk is Low and there is no current outage or declared need."],
+    priority_escalation: priority,
+    channels: priority ? ["SMS", "email", "phone call"] : ["SMS", "email"],
+    timing: [
+      "24 hours before the storm",
+      "6 hours before the storm",
+      "when an outage is confirmed",
+      "when the estimate changes by more than 2 hours",
+      "when power is restored",
+    ],
+    escalate_to_human_when: [
+      ...(priority ? ["outage lasts more than 4 hours (declared need)"] : []),
+      "a downed line is reported",
+      "the model can't make a reliable prediction",
+    ],
+  };
+}
+
+// Hours as they'd read in a text message.
+function smsHours(hours) {
+  if (hours < 1) return "under 1 hr";
+  if (hours < 36) return `${Math.round(hours)} hrs`;
+  return `${Math.round(hours / 24 * 2) / 2} days`;
+}
+
+// "3 hrs to 1.5 days, most likely about 14 hrs"
+function smsRange({ lowHours, typicalHours, highHours }) {
+  return `${smsHours(lowHours)} to ${smsHours(highHours)}, most likely about ${smsHours(typicalHours)}`;
+}
+
+// Text messages are capped at one SMS segment group; every template fits.
+const SMS_LIMIT = 320;
+const SAFETY = "Stay 35 ft from downed lines and call 911 if you see one.";
+
+// The four customer notifications for the selected location, built from the
+// same model numbers as the other tools. Exported for the chat's alert button.
+export async function draftNotifications({ declared_needs }) {
+  const selected = selection();
+  if (selected.error) return selected;
+  const { customer, distance } = selected;
+  const needs = declared_needs ?? [];
+  const severity = mapApi.getSeverity();
+  const eligibility = alertEligibility(customer, needs);
+  const confidence = confidenceFor(customer, distance);
+  const reliable = confidence.level !== "low";
+
+  // Current estimate: the displayed sample's outage if there is one here,
+  // otherwise the storm forecast. None when calm or the match isn't reliable.
+  let estimate = null;
+  let estimateSource = "none";
+  if (reliable) {
+    const sampled = await handlers.estimate_restoration({ storm_level: null, crews: null, access_issue: false });
+    if (sampled.low_hours != null) {
+      estimate = { lowHours: sampled.low_hours, typicalHours: sampled.typical_hours, highHours: sampled.high_hours };
+      estimateSource = "displayed sampled outage";
+    } else if (severity > 0) {
+      estimate = forecastRange(customer, severity, CREWS);
+      estimateSource = "storm forecast";
+    }
+  }
+
+  // Example of a changed estimate: half the crews are sent to harder-hit areas.
+  const fewerCrews = Math.round(CREWS / 2);
+  let updated = null;
+  if (estimate) {
+    const sampled = estimateSource === "displayed sampled outage"
+      ? await handlers.estimate_restoration({ storm_level: null, crews: fewerCrews, access_issue: false })
+      : null;
+    updated = sampled?.low_hours != null
+      ? { lowHours: sampled.low_hours, typicalHours: sampled.typical_hours, highHours: sampled.high_hours }
+      : forecastRange(customer, severity, fewerCrews);
+  }
+
+  const band = severity > 0 && reliable
+    ? riskBand(failureChance(stormForecast(mapApi.grid, mapApi.forecastInputs, severity).scale, mapApi.forecastInputs.exposure[customer.index]))
+    : null;
+  const priorityLine = eligibility.priority_escalation ? " You're on our priority list; we'll call if it lasts over 4 hrs." : "";
+
+  const messages = [
+    {
+      id: "pre_storm",
+      title: "Before the storm",
+      send_when: "24 hours and 6 hours before the storm arrives",
+      text: `Storm alert (simulated): A storm is heading for your area.${band ? ` Outage risk at your address: ${band}.` : ""} ` +
+        `Charge phones and keep flashlights and water ready. ${SAFETY} Report outages on the official outage map.`,
+    },
+    {
+      id: "outage_confirmed",
+      title: "Outage confirmed",
+      send_when: "When an outage is confirmed",
+      text: "Outage (simulated): Power is out in your area from storm damage on your line. " +
+        (estimate ? `Estimated restoration: ${smsRange(estimate)}.` : "Crews are assessing the damage; we'll text an estimate soon.") +
+        `${priorityLine} ${SAFETY} Never run a generator indoors.`,
+    },
+    {
+      id: "estimate_updated",
+      title: "Estimate updated",
+      send_when: "When the estimate changes by more than 2 hours",
+      text: updated
+        ? `Update (simulated): Your restoration estimate is now ${smsRange(updated)}, because crews were sent to harder-hit areas. ${SAFETY}`
+        : `Update (simulated): Your restoration estimate has changed. We'll text the new time range as soon as crews assess the damage. ${SAFETY}`,
+    },
+    {
+      id: "restored",
+      title: "Power restored",
+      send_when: "When power is restored",
+      text: "Power restored (simulated): Power is back on in your area. If yours is still out, report it on the official outage map; " +
+        "your home may have a separate problem. Check food that was in the fridge.",
+    },
+  ].map((message) => ({ ...message, channels: eligibility.channels, characters: message.text.length }));
+
+  const tooLong = messages.find((m) => m.characters > SMS_LIMIT);
+  if (tooLong) throw new Error(`The ${tooLong.title} message is over ${SMS_LIMIT} characters.`);
+
+  return {
+    ...eligibility,
+    ...describeStorm(mapApi.getStormLevel()),
+    estimate_source: estimateSource,
+    estimate_update_example: updated ? `same storm with ${fewerCrews} crews instead of ${CREWS}` : null,
+    confidence: confidence.level,
+    messages,
+    note: (reliable
+      ? ""
+      : "This location can't be matched reliably, so the messages leave out time estimates. ") +
+      "Example messages from a simulation, not real notifications. Rules are the team's documented challenge assumptions, not utility policy.",
   };
 }
 
@@ -192,19 +362,20 @@ const handlers = {
     if (selected.error) return selected;
     return {
       ...currentStatus(selected.customer),
-      storm_severity_percent: Math.round(mapApi.getSeverity() * 100),
+      ...describeStorm(mapApi.getStormLevel()),
+      is_calm: mapApi.getSeverity() === 0,
       confidence: confidenceFor(selected.customer, selected.distance).level,
       note: NOTE,
     };
   },
 
-  async set_storm_severity({ percent }) {
+  async set_storm_level({ level }) {
     if (!mapApi) return { error: "The map is still loading. Try again in a moment." };
-    const forecast = mapApi.setStormSeverity(Math.round(clamp(percent, 0, 100) / 5) * 5);
+    const forecast = mapApi.setStormLevel(levelFrom(level).id);
     // Return safe area-wide counts, never asset identifiers or coordinates.
     const { summary } = mapApi.getScenario();
     return {
-      ...stormSummary(forecast),
+      ...stormSummary(forecast, mapApi.getStormLevel()),
       sampled_outcome: {
         damage_locations: summary.damages,
         customers_without_power: summary.customersOut,
@@ -214,17 +385,18 @@ const handlers = {
     };
   },
 
-  async get_outage_risk({ severity_percent }) {
+  async get_outage_risk({ storm_level }) {
     const selected = selection();
     if (selected.error) return selected;
     const { customer, distance } = selected;
-    const severity = severityFrom(severity_percent);
+    const level = levelFrom(storm_level);
+    const severity = severityOf(level);
     const confidence = confidenceFor(customer, distance);
     if (severity === 0) {
       return {
-        severity_percent: 0,
+        ...describeStorm(level),
         risk_band: "Low",
-        note: "Storm severity is 0% (calm), so no storm outage is expected. Set a severity to forecast a storm.",
+        note: "Calm weather, so no storm outage is expected. Choose a storm level to forecast a storm.",
       };
     }
 
@@ -233,13 +405,13 @@ const handlers = {
     const chance = failureChance(forecast.scale, exposure);
     const relative = exposure / (exposureMedian() || 1);
     return {
-      severity_percent: Math.round(severity * 100),
+      ...describeStorm(level),
       risk_band: riskBand(chance),
       chance_of_outage: Math.round(chance * 100) / 100,
       confidence: confidence.level,
       confidence_reason: confidence.reason,
       factors: [
-        `Storm strength: ${Math.round(severity * 100)}% of the worst storm on record.`,
+        `Storm strength: ${level.name.toLowerCase()}, like ${level.like} (about ${levelLineDamage(level, mapApi.grid.meta.worstStorm)} broken poles and wires across the area).`,
         `Power reaches this home through ${protectiveDevices(customer)} protective devices; more line upstream means more places a failure can cut power.`,
         relative > 1.2
           ? `Lines feeding this home were damaged about ${round1(relative)}x as often as the area's typical home in past storms.`
@@ -252,12 +424,13 @@ const handlers = {
     };
   },
 
-  async estimate_restoration({ severity_percent, crews, access_issue }) {
+  async estimate_restoration({ storm_level, crews, access_issue }) {
     // Read the selected location and requested operational assumptions.
     const selected = selection();
     if (selected.error) return selected;
     const { customer, distance } = selected;
-    const severity = severityFrom(severity_percent);
+    const level = levelFrom(storm_level);
+    const severity = severityOf(level);
     const crewCount = crews == null ? CREWS : clamp(crews, 10, 200);
     const { adders } = await loadLabor();
     const multiplier = mapApi.grid.meta.indirectLaborMultiplier;
@@ -273,7 +446,7 @@ const handlers = {
     const share = mapApi.forecastInputs.queueShare[customer.index];
     const active = mapApi.getScenario();
 
-    // At the displayed severity, use this sample's upstream-dependent steps.
+    // At the displayed storm level, use this sample's upstream-dependent steps.
     if (severity === active.severity) {
       const zone = mapApi.zoneByCustomer.get(customer.index);
       if (!zone) {
@@ -325,22 +498,21 @@ const handlers = {
       };
     }
 
-    // A different severity describes a hypothetical forecast without moving the map.
+    // A different storm level describes a hypothetical forecast without moving the map.
     if (severity === 0) {
-      return { scenario: "hypothetical calm forecast", note: "No new storm damage is expected at 0%. The displayed map scenario has not been changed. " + NOTE };
+      return { scenario: "hypothetical calm forecast", note: "No new storm damage is expected in calm weather. The displayed map scenario has not been changed. " + NOTE };
     }
 
     // Preserve the team's expected repair-count and queue-position explanation.
-    const ownRepair = repairClockHours(mapApi.forecastInputs.repairHours[customer.index] + accessLaborHours, multiplier);
-    const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount);
-    const range = restorationRange(ownRepair, forecast.stormClearHours, share);
+    const { forecast, ...range } = forecastRange(customer, severity, crewCount, accessLaborHours);
     const lastDevice = mapApi.forecastInputs.lastRepairDevice[customer.index];
     const exposure = mapApi.forecastInputs.exposure[customer.index];
     const repairsOnPath = expectedRepairsOnPath(forecast.scale, exposure);
 
     // Keep hypothetical results clearly separate from the displayed sample.
     return {
-      scenario: `hypothetical forecast at ${Math.round(severity * 100)}% severity`,
+      scenario: `hypothetical forecast for a ${level.name.toLowerCase()}`,
+      ...describeStorm(level),
       crews: crewCount,
       low_hours: round1(range.lowHours),
       typical_hours: round1(range.typicalHours),
@@ -363,50 +535,24 @@ const handlers = {
   async check_alert_eligibility({ declared_needs }) {
     const selected = selection();
     if (selected.error) return selected;
-    const { customer } = selected;
-    const severity = mapApi.getSeverity();
-    const needs = declared_needs ?? [];
-    const reasons = [];
-
-    if (severity > 0) {
-      const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity);
-      const band = riskBand(failureChance(forecast.scale, mapApi.forecastInputs.exposure[customer.index]));
-      if (band !== "Low") reasons.push(`Outage risk is ${band} for the current storm forecast.`);
-    }
-    if (mapApi.zoneByCustomer.has(customer.index)) reasons.push("An outage was generated for this location in the displayed storm scenario.");
-    if (needs.length) reasons.push(`Customer declared: ${needs.join(", ").replaceAll("_", " ")}.`);
-
-    const priority = needs.length > 0;
     return {
-      eligible: reasons.length > 0,
-      reasons: reasons.length ? reasons : ["Risk is Low and there is no current outage or declared need."],
-      priority_escalation: priority,
-      channels: priority ? ["SMS", "email", "phone call"] : ["SMS", "email"],
-      timing: [
-        "24 hours before the storm",
-        "6 hours before the storm",
-        "when an outage is confirmed",
-        "when the estimate changes by more than 2 hours",
-        "when power is restored",
-      ],
-      escalate_to_human_when: [
-        ...(priority ? ["outage lasts more than 4 hours (declared need)"] : []),
-        "a downed line is reported",
-        "the model can't make a reliable prediction",
-      ],
+      ...alertEligibility(selected.customer, declared_needs ?? []),
       note: "Rules are the team's documented challenge assumptions, not utility policy.",
     };
   },
+
+  draft_notifications: draftNotifications,
 };
 
 // Short status line shown in the chat while a tool runs.
 export const TOOL_STATUS = {
   search_address: "Looking up your address…",
   get_current_status: "Checking current outages…",
-  set_storm_severity: "Updating the storm forecast on the map…",
+  set_storm_level: "Updating the storm forecast on the map…",
   get_outage_risk: "Forecasting your outage risk…",
   estimate_restoration: "Estimating restoration time…",
   check_alert_eligibility: "Checking alert eligibility…",
+  draft_notifications: "Drafting your alert messages…",
 };
 
 // Run one tool_use block and return its tool_result block.

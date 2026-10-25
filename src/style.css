@@ -5,6 +5,9 @@
   --accent: #bb0000;
   --nav-bg: #ffffff;
   --border: #e3e3e8;
+  --ok: #15803d;
+  --ok-bg: #ecfdf3;
+  --sms-bg: #eef1f6;
   /* RGB(A) channels shared by deck.gl layers and the map legend. */
   --map-overhead: 37, 99, 235;
   --map-underground: 22, 163, 74;
@@ -477,6 +480,120 @@ body {
 
 .chatbot-explanation > div {
   margin-top: 6px;
+}
+
+/* Alert preview: the button in the chat bar and the card it produces. */
+.alerts-button {
+  margin-left: auto;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--nav-bg);
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.alerts-button:hover {
+  background: var(--bg);
+}
+
+.alerts-button:focus-visible {
+  outline: 3px solid var(--fg);
+  outline-offset: 2px;
+}
+
+.alert-card {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.alert-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.alert-badge {
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.alert-badge.eligible {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.chatbot-message.rich .alert-facts {
+  margin: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.alert-need {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 12px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.alert-need input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.alert-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-message-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 0.85rem;
+}
+
+.alert-message-head span {
+  color: var(--muted);
+}
+
+/* Styled like a received text message. */
+.chatbot-message.rich .alert-text {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  background: var(--sms-bg);
+  border-radius: 12px 12px 12px 4px;
+}
+
+.alert-card .simulation-note {
+  margin: 10px 0 0;
+}
+
+@media (max-width: 520px) {
+  .chat-view-bar strong {
+    display: none;
+  }
 }
 
 .chatbot-form {

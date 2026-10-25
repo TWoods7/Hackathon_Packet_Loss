@@ -6,11 +6,12 @@ Packet Loss's **Chat AEP** is a HackOHIO 2026 outage-concierge prototype built w
 
 ## Current features
 
-- A storm-severity slider that generates repeatable damage and outage scenarios.
+- A storm-strength slider with named levels (calm, thunderstorms, a winter storm, Helene's remnants, up to the February 2025 storms) that generates repeatable damage and outage scenarios.
 - Forecast hexagons showing expected hours without power across possible outcomes.
 - Simulated damage markers and approximate outage circles, with affected-customer counts, repair-work totals, and upstream-dependent restoration steps.
-- Address search that matches the nearest customer node and refreshes its simulated status as severity changes.
-- An assistant that can change severity, read the same active scenario, explain risk, estimate repair ranges, evaluate alert eligibility, and draft customer notifications.
+- Address search that matches the nearest customer node and refreshes its simulated status as the storm level changes.
+- An assistant that can change the storm level, read the same active scenario, explain risk, estimate repair ranges, evaluate alert eligibility, and draft customer notifications.
+- A **Preview my alerts** button in the chat that shows the four customer messages (before the storm, outage confirmed, estimate updated, power restored) with channels, send timing, escalation triggers, and a checkbox for declaring powered medical equipment.
 
 All outage results are model outputs, not live utility information. Address matching uses a nearby customer node as a proxy, not a verified service-account match. Repair ranges use labor and queue assumptions and are not official restoration deadlines or validated confidence intervals. The app drafts notifications; it does not send them.
 
@@ -65,7 +66,7 @@ npm run dev
 
 Open the printed URL, normally `http://localhost:5173/`. Vite may choose another port if 5173 is occupied; allow that origin in the Maps key settings too. The app is one page containing the map and a chat view that opens over it when a location is searched.
 
-The storm starts at **0%**, generating no new simulated damage or outages. Move the slider to generate an outcome. **Area without power** starts enabled; enable **Damaged equipment** to see generated damage markers. After searching, **Nearest to you** shows the address-to-node connection. Click an outage circle for details. Use **Back to map** to return from chat.
+The storm starts at **Calm**, generating no new simulated damage or outages. Move the slider to generate an outcome. **Area without power** starts enabled; enable **Damaged equipment** to see generated damage markers. After searching, **Nearest to you** shows the address-to-node connection. Click an outage circle for details. Use **Back to map** to return from chat.
 
 Restart Vite after changing `.env` or the server prompt. Start a fresh conversation when checking revised prompt behavior.
 
@@ -140,22 +141,23 @@ Everything under `public/` is downloadable. The full customer attributes stay in
 The active flow is:
 
 1. `prepareForecast(grid)` calculates customer exposure once.
-2. `stormForecast()` converts severity into failure probabilities and expected outage hours. At 100%, the model targets the historical reference window's damage count in expectation; the slider is not wind speed or a customer's outage probability.
-3. `simulateStormDamage()` compares each candidate probability with a seeded random draw. The map uses seed **2026**. Reusing the seed and dataset produces the same outcome, and raising severity retains existing failures while adding others. Reordering or rebuilding candidates can change the outcome.
-4. `buildStormScenario()` traces generated failures through protective-device chains, groups customers under their most upstream tripped device, and totals repair work. Multiple repairs affecting one device remain separate repair records.
-5. `map.js` updates circles, markers, counts, and an existing address result. It refreshes the shared customer-to-outage lookup so assistant tools read the same scenario.
+2. The slider picks a level from `src/stormLevels.js`. Each level is an expected number of broken poles and wires, named after real storms in the area's 2022-2026 damage reports (ordinary thunderstorm days break 7-16; the January 2025 winter storm 33; Helene's remnants 157; the February 12-17, 2025 storms 882). `levelSeverity()` turns that into a severity fraction: the share of the worst storm's line damage. The slider is not wind speed or rainfall, and calm includes light rain.
+3. `stormForecast()` converts severity into failure probabilities and expected outage hours.
+4. `simulateStormDamage()` compares each candidate probability with a seeded random draw. The map uses seed **2026**. Reusing the seed and dataset produces the same outcome, and raising the storm level retains existing failures while adding others. Reordering or rebuilding candidates can change the outcome.
+5. `buildStormScenario()` traces generated failures through protective-device chains, groups customers under their most upstream tripped device, and totals repair work. Multiple repairs affecting one device remain separate repair records.
+6. `map.js` updates circles, markers, counts, and an existing address result. It refreshes the shared customer-to-outage lookup so assistant tools read the same scenario.
 
-The original historical damage records remain in `grid.damages`; the current map displays newly generated damage instead. The active simulation does not add those historical unrepaired records as a baseline at 0%.
+The original historical damage records remain in `grid.damages`; the current map displays newly generated damage instead. The active simulation does not add those historical unrepaired records as a baseline in calm weather.
 
 **Read the two map views separately:** forecast hexagons show expected hours across possible outcomes; purple circles and damage markers show one sampled outcome. A location may have positive forecast risk and no outage in that sample.
 
-Circles summarize geographic spread, not outage probability or damage density. Their centers are coarsened, their minimum radius is 300 m, and their radius covers the farthest affected customer plus 100 m. A distant customer can make a circle large; unaffected locations may lie inside it. Use the selected location's network-based tool result, not apparent circle inclusion, to determine its simulated status.
+Circles summarize geographic spread, not outage probability or damage density. Each outage is drawn as one circle per ~1 km grid cell that has affected customers (`OUTAGE_CELL_DEGREES` in `map.js`), so a long outage appears as a trail of small circles. Centers are coarsened, the minimum radius is 300 m, and each radius covers that cell's farthest affected customer plus 100 m. Unaffected locations may lie inside a circle. Use the selected location's network-based tool result, not apparent circle inclusion, to determine its simulated status.
 
-Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies and then prioritizes ready repairs by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever severity changes.
+Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies and then prioritizes ready repairs by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever the storm level changes.
 
 Step times describe elapsed work after the area's crew starts, with normal access. The assistant's planning range additionally considers declared access allowances and waiting for work elsewhere in the storm. It excludes the area's own labor from that outside backlog to avoid double counting. Crew count can change the modeled wait while the area's baseline one-crew sequence stays the same. `restorationRange()` and `sampledRestorationRange()` in `restorationModel.js` contain the duration formulas.
 
-Hypothetical forecasts use expected work and the selected location's assumed repair-queue position. If no outage was generated at the selected location, the active-sample tool supplies no restoration duration. A request for another severity returns a hypothetical forecast without moving the map. These are simplified scheduling assumptions, not a full dispatch optimizer or calibrated confidence intervals.
+Hypothetical forecasts use expected work and the selected location's assumed repair-queue position. If no outage was generated at the selected location, the active-sample tool supplies no restoration duration. A request for another storm level returns a hypothetical forecast without moving the map. These are simplified scheduling assumptions, not a full dispatch optimizer or calibrated confidence intervals.
 
 Use the same scenario helper when adding a module under `src/`:
 
@@ -163,15 +165,17 @@ Use the same scenario helper when adding a module under `src/`:
 // Import the committed-grid loader and reusable scenario functions.
 import { loadGrid, prepareForecast } from "./outages.js";
 import { buildStormScenario } from "./stormScenario.js";
+import { stormLevel, levelSeverity } from "./stormLevels.js";
 
 // Load and unpack the browser dataset.
 const grid = await loadGrid();
 
-// Prepare exposure once for subsequent severity changes.
+// Prepare exposure once for subsequent storm-level changes.
 const prepared = prepareForecast(grid);
 
-// Generate a 50% storm using the map's default seed.
-const scenario = buildStormScenario(grid, prepared, 0.5, 2026);
+// Generate a winter storm using the map's default seed.
+const severity = levelSeverity(stormLevel("winter_storm"), grid.meta.worstStorm);
+const scenario = buildStormScenario(grid, prepared, severity, 2026);
 
 // Read safe aggregate results for this sampled outcome.
 console.log(scenario.summary);
@@ -184,9 +188,10 @@ Browser code uses `fetch()`; Node build scripts use local file readers. The norm
 Searching a location opens the chat view over the loaded map. The browser posts conversation turns to `/api/chat`; `server/chat.js` adds the server-owned prompt and tool definitions and calls Anthropic. Tool requests execute in `src/assistantTools.js` against the active map state, and the browser returns their results for the next assistant turn.
 
 - `search_address` selects a nearby service node. `get_current_status` describes its sampled outage status, not its real electricity supply.
-- `set_storm_severity` updates the map and returns forecast expectations plus a separate sampled-outcome summary.
+- `set_storm_level` moves the slider to a named level (Claude matches the customer's words, such as "a thunderstorm" or "a hurricane") and updates the map and returns forecast expectations plus a separate sampled-outcome summary.
 - `get_outage_risk` reports forecast risk. `estimate_restoration` reports an assumption-based range when available and supports crew/access inputs.
-- `check_alert_eligibility` applies documented challenge rules and declared needs. The assistant can draft a message; it does not enroll or notify anyone.
+- `check_alert_eligibility` applies documented challenge rules and declared needs.
+- `draft_notifications` writes the four customer messages from the same numbers: the displayed sample's restoration range when this location has an outage, otherwise the storm forecast's range, and no times for calm weather or an unreliable match. The "estimate updated" example reruns the estimate with half the crews. Each message is labeled simulated and checked to fit in 320 characters. The **Preview my alerts** button calls it directly (no AI round trip), and the chat shows the same card when Claude calls it. Nothing is enrolled or sent.
 
 The prompt requires fresh tool reads for follow-up predictions, separation of sampled outcomes and expectations, and a fallback for unreliable matches. Customer-facing explanations appear under "How I got this". Tool results exclude premise IDs, coordinates, device IDs, circuit IDs, and life-support flags. Needs are declared by the customer rather than inferred from private records.
 
@@ -194,22 +199,24 @@ The prompt requires fresh tool reads for follow-up predictions, separation of sa
 
 Use the committed grid and seed 2026 for these reference counts:
 
-| Severity | Sampled damage locations | Customers without power | Outage areas |
+| Storm level | Sampled damage locations | Customers without power | Outage areas |
 |---|---:|---:|---:|
-| 0% | 0 | 0 | 0 |
-| 50% | 427 | 30,456 | 113 |
-| 100% | 891 | 46,845 | 148 |
+| Calm | 0 | 0 | 0 |
+| Thunderstorm | 9 | 3,295 | 7 |
+| Winter storm | 33 | 7,690 | 21 |
+| Major storm (Helene's remnants) | 169 | 19,589 | 66 |
+| Worst on record | 891 | 46,845 | 148 |
 
 Counts can change with the dataset or seed. Expected forecast counts need not equal sampled counts. To demonstrate an adjustable scenario:
 
-1. Start at 0%, then show 50% and 100%. Return to 50% to show repeatability.
-2. Select a team-approved location with usable network data. Change severity and confirm that map counts, selected-location status, and fresh assistant tool responses agree.
-3. Ask the assistant to change severity. Return to the map to show that the same scenario changed.
+1. Start at Calm, then show Thunderstorm, Major storm, and Worst on record. Return to Major storm to show repeatability.
+2. Select a team-approved location with usable network data. Change the storm level and confirm that map counts, selected-location status, and fresh assistant tool responses agree.
+3. Tell the assistant "a hurricane is coming" and check that it picks Major storm. Return to the map to show that the same scenario changed.
 4. Compare the selected location's restoration step in the search result and assistant response. Ask for more crews or restricted access: repair estimates can change while sampled damage stays unchanged. Step times start when the area's crew begins; the range may also include waiting elsewhere.
 5. Ask for alert eligibility and a draft pre-storm notification. Explain the rules and show the draft without claiming it was sent.
 6. Ask whether the app can confirm real power status. It should explain the simulation limitation. An unreliable location match should trigger the documented fallback.
 
-The severity comparison demonstrates an adjustable scenario input. Review the challenge's other customer-journey requirements separately before claiming the whole submission is complete.
+The storm-level comparison demonstrates an adjustable scenario input. Review the challenge's other customer-journey requirements separately before claiming the whole submission is complete.
 
 ## Optional: change or rebuild the datasets
 
@@ -306,7 +313,7 @@ Working outputs remain ignored under `data/extracted/`. Share approved updates t
 | `node` or `npm` is not recognized | Install Node.js with npm, reopen the terminal, and check PATH. |
 | PowerShell blocks `npm.ps1` | Use `npm.cmd ci` or `npm.cmd run dev`. |
 | Missing Google Maps key or map authorization errors | Check root `.env`, enabled APIs, allowed origin, and restart/rebuild as appropriate. |
-| No outage circles or damage markers | At 0% there is no generated damage; increase severity and enable the matching legend checkbox. |
+| No outage circles or damage markers | In calm weather there is no generated damage; choose a stronger storm level and enable the matching legend checkbox. |
 | Missing `@anthropic-ai/sdk` during build | Run `npm.cmd ci` after pulling dependency changes, then retry the build. |
 | Chat says it is not configured | Set the server-only `ANTHROPIC_API_KEY`, restart Vite, and begin a fresh conversation. |
 | Chat route missing on static hosting | Provide the server middleware or use local Vite dev/preview; `dist/` alone has no API route. |

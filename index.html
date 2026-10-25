@@ -49,11 +49,11 @@
     </div>
     <section class="storm-panel" aria-labelledby="storm-title">
       <div class="storm-header">
-        <label id="storm-title" for="storm-severity">Storm severity</label>
-        <output id="storm-value" for="storm-severity">0%</output>
+        <label id="storm-title" for="storm-severity">Storm strength</label>
+        <output id="storm-value" for="storm-severity">Calm</output>
       </div>
-      <input id="storm-severity" type="range" min="0" max="100" step="5" value="0" autocomplete="off" />
-      <div class="storm-scale"><span>Calm</span><span>Worst on record</span></div>
+      <input id="storm-severity" type="range" min="0" max="9" step="1" value="0" autocomplete="off" />
+      <div class="storm-scale"><span>Calm</span><span>Thunderstorm</span><span>Helene</span><span>Feb 2025</span></div>
       <p id="storm-summary" aria-live="polite"></p>
       <div id="heat-legend" hidden>
         <div class="heat-bar"></div>
@@ -73,6 +73,7 @@
           Back to map
         </button>
         <strong>Outage Assistant</strong>
+        <button class="alerts-button" type="button">🔔 Preview my alerts</button>
       </header>
       <div class="chatbot-messages" aria-live="polite"></div>
       <form class="chatbot-form">

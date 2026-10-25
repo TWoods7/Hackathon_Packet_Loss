@@ -1,4 +1,4 @@
-import { runTool, TOOL_STATUS } from "./assistantTools.js";
+import { runTool, TOOL_STATUS, draftNotifications } from "./assistantTools.js";
 
 // The assistant is a full-page view over the map. Searching a location opens
 // it (map.js fires "location-searched"); "Back to map" returns to the map.
@@ -11,6 +11,7 @@ const messages = panel.querySelector(".chatbot-messages");
 const form = panel.querySelector(".chatbot-form");
 const input = panel.querySelector(".chatbot-input");
 const sendButton = form.querySelector("button");
+const alertsButton = panel.querySelector(".alerts-button");
 
 // Safety limit on tool round trips for one customer message.
 const MAX_TOOL_ROUNDS = 8;
@@ -46,6 +47,8 @@ function splitExplanation(text) {
 async function getBotReply(text, onStatus) {
   conversation.push({ role: "user", content: text });
   const explanation = [];
+  // Alert previews from draft_notifications, shown as cards under the answer.
+  const cards = [];
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const { content, stop_reason } = await requestTurn();
@@ -57,11 +60,11 @@ async function getBotReply(text, onStatus) {
     const answer = parts.map((p) => p.answer).filter(Boolean).join("\n\n");
 
     if (stop_reason === "refusal") {
-      return { explanation, answer: "Sorry, I can't help with that. I can answer questions about outages, storms, preparation, and alerts." };
+      return { explanation, cards, answer: "Sorry, I can't help with that. I can answer questions about outages, storms, preparation, and alerts." };
     }
     if (stop_reason !== "tool_use") {
       const cutOff = stop_reason === "max_tokens" ? "\n\n(My answer was cut off. Ask me to continue.)" : "";
-      return { explanation, answer: (answer || "Sorry, I couldn't put together an answer.") + cutOff };
+      return { explanation, cards, answer: (answer || "Sorry, I couldn't put together an answer.") + cutOff };
     }
     if (answer) explanation.push(answer);
 
@@ -70,13 +73,16 @@ async function getBotReply(text, onStatus) {
     const results = [];
     for (const toolUse of toolUses) {
       onStatus(TOOL_STATUS[toolUse.name] ?? "Working…");
-      results.push(await runTool(toolUse));
+      const result = await runTool(toolUse);
+      if (toolUse.name === "draft_notifications" && !result.is_error) cards.push(JSON.parse(result.content));
+      results.push(result);
     }
     conversation.push({ role: "user", content: results });
   }
 
   return {
     explanation,
+    cards,
     answer: "I couldn't finish working that out. Please try asking in a simpler way, or check the utility's official outage map.",
   };
 }
@@ -121,10 +127,72 @@ function addMessage(text, sender) {
   return bubble;
 }
 
+// Build an element with a class and optional text (textContent, so no markup).
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+// Fill an alert card from a draft_notifications result. The medical-equipment
+// checkbox is the customer's own declaration; changing it redraws the card.
+function fillAlertCard(card, alerts) {
+  card.replaceChildren();
+  const header = el("header", "alert-card-header");
+  header.append(
+    el("strong", null, "Your alert preview"),
+    el("span", `alert-badge ${alerts.eligible ? "eligible" : ""}`, alerts.eligible ? "Qualifies for alerts" : "Not enrolled automatically"),
+  );
+
+  const facts = el("ul", "alert-facts");
+  facts.append(
+    el("li", null, alerts.reasons.join(" ")),
+    el("li", null, `Sent by ${alerts.channels.join(", ")}.`),
+    el("li", null, `A person from the utility steps in when ${alerts.escalate_to_human_when.join("; ")}.`),
+  );
+
+  const needLabel = el("label", "alert-need");
+  const needBox = el("input");
+  needBox.type = "checkbox";
+  needBox.checked = alerts.priority_escalation;
+  needLabel.append(needBox, " I rely on powered medical equipment (adds a phone call and priority follow-up)");
+  needBox.addEventListener("change", async () => {
+    needBox.disabled = true;
+    const next = await draftNotifications({ declared_needs: needBox.checked ? ["medical_equipment"] : [] });
+    if (next.error) {
+      needBox.disabled = false;
+      return;
+    }
+    fillAlertCard(card, next);
+    card.querySelector(".alert-need input").focus();
+  });
+
+  const list = el("ol", "alert-messages");
+  for (const message of alerts.messages) {
+    const item = el("li");
+    const head = el("div", "alert-message-head");
+    head.append(el("strong", null, message.title), el("span", null, `${message.send_when} · ${message.channels.join(", ")}`));
+    item.append(head, el("p", "alert-text", message.text));
+    list.append(item);
+  }
+
+  card.append(header, facts, needLabel, list, el("p", "simulation-note", alerts.note));
+}
+
+// A new alert card for a draft_notifications result.
+function alertCard(alerts) {
+  const card = el("section", "alert-card");
+  card.setAttribute("aria-label", "Alert preview");
+  fillAlertCard(card, alerts);
+  return card;
+}
+
 // Fill a bot bubble with the answer and a collapsed "How I got this" section.
-function showReply(bubble, { explanation, answer }) {
+function showReply(bubble, { explanation, answer, cards = [] }) {
   bubble.classList.add("rich");
   bubble.innerHTML = renderMarkdown(answer);
+  for (const alerts of cards) bubble.appendChild(alertCard(alerts));
   if (explanation.length) {
     const details = document.createElement("details");
     details.className = "chatbot-explanation";
@@ -198,6 +266,29 @@ function ask(shown, text) {
     }
   });
 }
+
+// The alert button shows the preview straight away, without asking the
+// assistant: the messages come from the model, so no AI round trip is needed.
+alertsButton.addEventListener("click", () => {
+  addMessage("🔔 Preview my alerts", "user");
+  const bubble = addMessage("Drafting your alert messages…", "bot typing");
+  queue = queue.then(async () => {
+    try {
+      const alerts = await draftNotifications({ declared_needs: [] });
+      if (alerts.error) throw new Error(alerts.error);
+      bubble.classList.add("rich");
+      bubble.replaceChildren(
+        el("p", null, "These are the messages you'd get for this storm scenario. Change the storm slider and preview again to see them update."),
+        alertCard(alerts),
+      );
+    } catch (err) {
+      bubble.textContent = `Sorry, I couldn't draft your alerts: ${err.message}`;
+    } finally {
+      bubble.classList.remove("typing");
+      messages.scrollTop = messages.scrollHeight;
+    }
+  });
+});
 
 // A search from the address bar starts (or continues) the conversation with a
 // short summary for that location. The map has already moved there.

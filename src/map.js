@@ -7,6 +7,7 @@ import {
 } from "./outages.js";
 import { CREWS, CREW_SIZE } from "./restorationModel.js";
 import { registerMapApi } from "./assistantTools.js";
+import { STORM_LEVELS, levelSeverity, levelLineDamage } from "./stormLevels.js";
 // Use the tested sampler and outage calculations as one source of scenario state.
 import { buildStormScenario } from "./stormScenario.js";
 
@@ -51,6 +52,9 @@ function heatColor(hours) {
 // and every circle is at least 300 m across its radius.
 const OUTAGE_GRID_DEGREES = 0.0015;
 const OUTAGE_MIN_RADIUS_M = 300;
+// Large outages split into one circle per ~1 km cell, so a long outage shows as
+// a trail of small circles instead of one circle covering empty land.
+const OUTAGE_CELL_DEGREES = 0.9;
 
 // Shown wherever outage results appear: the data has no live outage feed.
 const SIMULATION_NOTE = "One possible storm outcome from historical damage patterns; not live outage information.";
@@ -118,12 +122,12 @@ function formatDistance(meters) {
 }
 
 // Center on the coordinate bounds and expand the circle to cover every point.
-function outageCircle(zone, customers) {
+function outageCircle(indices, customers) {
   let minLat = Infinity;
   let maxLat = -Infinity;
   let minLng = Infinity;
   let maxLng = -Infinity;
-  for (const i of zone.customers) {
+  for (const i of indices) {
     const point = customers[i];
     minLat = Math.min(minLat, point.lat);
     maxLat = Math.max(maxLat, point.lat);
@@ -137,10 +141,22 @@ function outageCircle(zone, customers) {
   };
   // Cover every affected customer, with margin, but never shrink below the minimum.
   let farthest = 0;
-  for (const i of zone.customers) {
+  for (const i of indices) {
     farthest = Math.max(farthest, distanceMeters(center, customers[i]));
   }
   return { center, radius: Math.max(OUTAGE_MIN_RADIUS_M, farthest + 100) };
+}
+
+// One circle per OUTAGE_CELL_DEGREES cell that has customers from this outage.
+function outageCircles(zone, customers) {
+  const cells = new Map();
+  for (const i of zone.customers) {
+    const { lat, lng } = customers[i];
+    const key = `${Math.floor(lat / OUTAGE_CELL_DEGREES)},${Math.floor(lng / OUTAGE_CELL_DEGREES)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(i);
+  }
+  return [...cells.values()].map((indices) => outageCircle(indices, customers));
 }
 
 // Build the HTML shown when a damage marker is clicked.
@@ -150,8 +166,8 @@ function damageInfoHtml(d) {
       <strong>${d.damageType ?? "Damage"}</strong>
       <div>Asset: ${d.assetType}</div>
       ${d.simulated
-        ? "<div>Generated for this storm scenario; not a reported incident.</div>"
-        : `<div>Reported: ${d.reported ?? "Unknown"}</div><div>Not yet repaired</div>`}
+      ? "<div>Generated for this storm scenario; not a reported incident.</div>"
+      : `<div>Reported: ${d.reported ?? "Unknown"}</div><div>Not yet repaired</div>`}
     </div>`;
 }
 
@@ -172,12 +188,12 @@ function roughCustomers(n) {
 function outageDetails(zone, device, devices) {
   const steps = zone.steps.length > 1
     ? [
-        "",
-        "Restoration steps (one crew, repairs closer to the substation first):",
-        ...zone.steps.map((step, i) =>
-          `${i + 1}. ${devices[step.device].type} repair (${damageSummary(step.damages)}): ` +
-          `${roughCustomers(step.customersRestored)} customers back in ${formatHours(step.doneAfterHours)}`),
-      ]
+      "",
+      "Restoration steps (one crew, repairs closer to the substation first):",
+      ...zone.steps.map((step, i) =>
+        `${i + 1}. ${devices[step.device].type} repair (${damageSummary(step.damages)}): ` +
+        `${roughCustomers(step.customersRestored)} customers back in ${formatHours(step.doneAfterHours)}`),
+    ]
     : [];
   return {
     title: `Simulated outage: ${device.type.toLowerCase()} tripped`,
@@ -373,7 +389,7 @@ async function initMap() {
 
   const infoWindow = new InfoWindow();
 
-    // Prepare customer exposure once and start with a calm simulated storm.
+  // Prepare customer exposure once and start with a calm simulated storm.
   const forecastInputs = prepareForecast(grid);
   const scenarioSeed = 2026;
   let activeScenario = buildStormScenario(
@@ -432,7 +448,7 @@ async function initMap() {
   const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
   // Rebuild circles and their lookups whenever the sampled outages change.
-    // Rebuild circles and lookups whenever sampled outages change.
+  // Rebuild circles and lookups whenever sampled outages change.
   const zoneByLayerId = new Map();
   const boundaryIds = new Set();
 
@@ -459,7 +475,7 @@ async function initMap() {
       // Preserve the existing approximate-circle geometry and styling.
       return new ScatterplotLayer({
         id,
-        data: [outageCircle(zone, customers)],
+        data: outageCircles(zone, customers),
         getPosition: (circle) => [
           circle.center.lng,
           circle.center.lat,
@@ -539,24 +555,30 @@ async function initMap() {
     });
   });
 
-  // Storm severity slider: recompute the forecast at most once per frame.
+  // Storm strength slider: one stop per named level in stormLevels.js.
+  // Recompute the forecast at most once per frame.
   const stormSlider = document.getElementById("storm-severity");
   const stormValue = document.getElementById("storm-value");
   const stormSummary = document.getElementById("storm-summary");
   const heatLegend = document.getElementById("heat-legend");
   const worst = grid.meta.worstStorm;
+  stormSlider.max = String(STORM_LEVELS.length - 1);
   document.getElementById("storm-assumptions").textContent =
-    `Simulation calibrated to the ${worst.start} to ${worst.end} report window: ` +
-    `100% targets ${worst.lineDamage} expected damage locations. Assumes ${CREWS} crews of ${CREW_SIZE}. Outcomes vary between scenarios.`;
+    "Storm strength is measured by expected broken poles and wires, compared with storms in this area's " +
+    `2022-2026 damage reports. Assumes ${CREWS} crews of ${CREW_SIZE}. Outcomes vary between scenarios.`;
+  // The level the displayed scenario was built for.
+  let activeLevel = STORM_LEVELS[0];
 
   let stormFrame = null;
   const updateStorm = () => {
     stormFrame = null;
 
-    // Convert the slider percentage into the fraction expected by the helper.
+    // Convert the slider's level into the severity fraction the forecast uses.
     // Build successfully before replacing the currently displayed scenario.
-    const severity = Number(stormSlider.value) / 100;
+    const level = STORM_LEVELS[Number(stormSlider.value)];
+    const severity = levelSeverity(level, worst);
     const nextScenario = buildStormScenario(grid, forecastInputs, severity, scenarioSeed);
+    activeLevel = level;
 
     // A selected circle or open marker popup belongs to the previous outcome.
     if (selectedBoundaryId !== null) toggleHullPanel(selectedBoundaryId, {});
@@ -590,27 +612,29 @@ async function initMap() {
       `${summary.customersOut.toLocaleString()} of ${customers.length.toLocaleString()} customers without power in this simulation · ` +
       `${summary.zones} outage areas · ${summary.damages} simulated damage locations`;
 
-    stormValue.textContent = `${stormSlider.value}%`;
+    stormValue.textContent = level.name;
+    stormSlider.setAttribute("aria-valuetext", level.name);
     heatLegend.hidden = severity === 0;
 
     // Explain why a sampled outcome can differ from the model's expected counts.
     stormSummary.textContent = severity === 0
-      ? "Calm scenario: no new simulated storm damage. Move the slider to generate a storm outcome."
-      : `Sampled outcome: ${summary.damages} damage locations and ${summary.customersOut.toLocaleString()} customers without power. ` +
-        `Forecast average: about ${Math.round(forecast.brokenPoles)} damage locations and ` +
-        `${(Math.round(forecast.customersOut / 100) * 100).toLocaleString()} customers affected, typically for ${formatHours(forecast.typicalHours)}. ` +
-        "The heatmap shows expected hours; circles and markers show this sampled outcome.";
+      ? "Calm: ordinary weather, including light rain, so no new simulated storm damage. Move the slider to generate a storm outcome."
+      : `Like ${level.like}: about ${levelLineDamage(level, worst)} broken poles and wires. ` +
+      `Sampled outcome: ${summary.damages} damage locations and ${summary.customersOut.toLocaleString()} customers without power. ` +
+      `Forecast average: about ${Math.round(forecast.brokenPoles)} damage locations and ` +
+      `${(Math.round(forecast.customersOut / 100) * 100).toLocaleString()} customers affected, typically for ${formatHours(forecast.typicalHours)}. ` +
+      "The heatmap shows expected hours; circles and markers show this sampled outcome.";
   };
   stormSlider.value = "0";
   stormSlider.addEventListener("input", () => {
     if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
   });
-  // Move the slider from code (the chatbot) and redraw right away.
-  const setStormSeverity = (percent) => {
+  // Move the slider from code (the chatbot) to a level id and redraw right away.
+  const setStormLevel = (id) => {
+    const index = STORM_LEVELS.findIndex((level) => level.id === id);
+    if (index < 0) throw new RangeError(`Unknown storm level: ${id}`);
     if (stormFrame !== null) cancelAnimationFrame(stormFrame);
-    // Match the slider's supported range and five-percentage-point increments.
-    if (!Number.isFinite(percent)) throw new RangeError("Storm percentage must be a finite number.");
-    stormSlider.value = String(Math.round(Math.max(0, Math.min(100, percent)) / 5) * 5);
+    stormSlider.value = String(index);
     updateStorm();
     return outage.forecast;
   };
@@ -714,7 +738,8 @@ async function initMap() {
     stepOfCustomer,
     damageSummary,
     searchAddress,
-    setStormSeverity,
+    setStormLevel,
+    getStormLevel: () => activeLevel,
     // Read completed scenario state even while an input frame is pending.
     getSeverity: () => activeScenario.severity,
     getScenario: () => activeScenario,
