@@ -15,9 +15,9 @@
   --map-outline: 255, 255, 255;
   --map-transparent: 0, 0, 0, 0;
   /* Outage circles (customers without power). */
-  --map-hull-fill: 249, 115, 22, 70;
-  --map-hull-selected-fill: 249, 115, 22, 120;
-  --map-hull-outline: 234, 88, 12;
+  --map-hull-fill: 147, 51, 234, 70;
+  --map-hull-selected-fill: 147, 51, 234, 120;
+  --map-hull-outline: 126, 34, 206;
   --map-hull-line-width: 2;
   --map-hull-hover-line-width: 5;
   --map-damage: 185, 28, 28;

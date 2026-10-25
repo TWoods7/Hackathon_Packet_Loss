@@ -1,6 +1,6 @@
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { HeatmapLayer } from "@deck.gl/aggregation-layers";
-import { LineLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { LineLayer, PolygonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { buildHexGrid, averageIntoHexes } from "./hexGrid.js";
 import {
   loadGrid,
   trippedDevices,
@@ -34,6 +34,18 @@ const DAMAGE_COLOR = layerColor("--map-damage");
 const HEAT_COLORS = [1, 2, 3, 4, 5, 6].map((step) => layerColor(`--map-heat-${step}`));
 // Fixed hour range so colors mean the same thing at every slider position.
 const HEAT_DOMAIN = [0.25, 48];
+
+// Color for a value in HEAT_DOMAIN, blending between neighboring HEAT_COLORS.
+// Below the range the hexagon is see-through.
+function heatColor(hours) {
+  if (hours < HEAT_DOMAIN[0]) return TRANSPARENT_COLOR;
+  const t = Math.min(1, (hours - HEAT_DOMAIN[0]) / (HEAT_DOMAIN[1] - HEAT_DOMAIN[0]));
+  const position = t * (HEAT_COLORS.length - 1);
+  const low = Math.floor(position);
+  const high = Math.min(low + 1, HEAT_COLORS.length - 1);
+  const mix = position - low;
+  return HEAT_COLORS[low].map((channel, i) => Math.round(channel + (HEAT_COLORS[high][i] - channel) * mix));
+}
 
 // Outage circles never point at a single home: centers snap to a ~150 m grid
 // and every circle is at least 300 m across its radius.
@@ -202,24 +214,25 @@ function setupHullPanel(mapEl, onSelectionChange) {
 
 
 // Build the visible layers. Individual customer locations are never drawn:
-// today's outages show as approximate circles over the storm forecast heatmap.
+// today's outages show as approximate circles over the storm forecast hexagons.
 function buildLayers(search, visibility, boundaryLayers, outage) {
   const { forecast } = outage;
   const layers = [
-    // Averaged (MEAN), so dense neighborhoods don't look riskier just for having more homes.
-    new HeatmapLayer({
-      id: "storm-heatmap",
-      data: outage.customers,
+    // Each hexagon is the average over its customers (see hexGrid.js), so dense
+    // neighborhoods don't look riskier just for having more homes.
+    new PolygonLayer({
+      id: "storm-hexes",
+      data: outage.hexes,
       visible: forecast.severity > 0,
-      getPosition: (c) => [c.lng, c.lat],
-      getWeight: (c) => forecast.expectedHours[c.index],
-      aggregation: "MEAN",
-      colorRange: HEAT_COLORS,
-      colorDomain: HEAT_DOMAIN,
-      radiusPixels: 40,
-      updateTriggers: { getWeight: forecast.severity },
+      getPolygon: (hex) => hex.polygon,
+      getFillColor: (hex) => heatColor(hex.value),
+      stroked: false,
+      pickable: true,
+      updateTriggers: { getFillColor: forecast.severity },
     }),
-    ...boundaryLayers,
+    // Hide with `visible` rather than removing: deck.gl can't redraw a layer
+    // object it has already removed, so the circles wouldn't come back.
+    ...boundaryLayers.map((layer) => layer.clone({ visible: visibility.outages })),
     // Damaged equipment that hasn't been repaired.
     new ScatterplotLayer({
       id: "damage",
@@ -346,17 +359,19 @@ async function initMap() {
   // The storm forecast starts calm; the severity slider updates it.
   const forecastInputs = prepareForecast(grid);
   const outage = {
-    customers,
+    // Built once; the slider only refreshes each hexagon's average.
+    hexes: buildHexGrid(customers),
     forecast: stormForecast(grid, forecastInputs, 0),
     damages: grid.damages,
     onDamageClick: showDamageInfo,
   };
   const customersWithoutPower = noPower.reduce((sum, value) => sum + value, 0);
 
-  // Reset saved checkbox states so the legend and map both start with items off.
+  // Reset saved checkbox states so the legend and map both start with items off,
+  // except boxes marked data-default="on" (the outage circles).
   const legendBoxes = [...document.querySelectorAll(".legend input[data-layer]")];
   const visibility = Object.fromEntries(legendBoxes.map((box) => {
-    box.checked = false;
+    box.checked = box.dataset.default === "on";
     return [box.dataset.layer, box.checked];
   }));
   let currentSearch = null;
@@ -416,7 +431,11 @@ async function initMap() {
   };
 
   // Show a small text box only while the hull is under the mouse.
-  const hullTooltip = ({ picked, layer }) => {
+  const hullTooltip = ({ picked, layer, object }) => {
+    // Forecast hexagons describe the area average, never a household.
+    if (picked && layer?.id === "storm-hexes" && object.value >= HEAT_DOMAIN[0]) {
+      return { text: `Forecast: ${formatHours(object.value)} without power on average here`, className: "hull-tooltip" };
+    }
     if (!picked || !boundaryIds.has(layer?.id)) return null;
     const zone = zoneByLayerId.get(layer.id);
     const device = grid.devices[zone.device];
@@ -441,6 +460,10 @@ async function initMap() {
   legendBoxes.forEach((box) => {
     box.addEventListener("change", () => {
       visibility[box.dataset.layer] = box.checked;
+      // Hiding the outage circles also closes an open outage's panel.
+      if (box.dataset.layer === "outages" && !box.checked && selectedBoundaryId !== null) {
+        toggleHullPanel(selectedBoundaryId, {});
+      }
       redraw();
     });
   });
@@ -461,6 +484,7 @@ async function initMap() {
     const severity = Number(stormSlider.value) / 100;
     const forecast = stormForecast(grid, forecastInputs, severity);
     outage.forecast = forecast;
+    averageIntoHexes(outage.hexes, forecast.expectedHours);
     redraw();
 
     stormValue.textContent = `${stormSlider.value}%`;
