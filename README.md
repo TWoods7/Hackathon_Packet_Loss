@@ -26,7 +26,7 @@ Documents/
     Matched_Upstream/
       matched_upstream.txt
   Hackathon_Packet_Loss/
-    scripts/
+    scripts/dataBuildScripts/
     public/data/customers.json
     data/extracted/
 ```
@@ -44,7 +44,7 @@ node --version
 npm.cmd ci
 ```
 
-`scripts/export-remaining-layers.js` supports `QGIS_BIN` and `QGIS_DATA_ROOT` environment overrides. Set these to real local paths if the defaults differ on your computer; no permanent PATH change is required for the GDAL tools.
+`scripts/dataBuildScripts/export-remaining-layers.js` supports `QGIS_BIN` and `QGIS_DATA_ROOT` environment overrides. Set these to real local paths if the defaults differ on your computer; no permanent PATH change is required for the GDAL tools.
 
 ### Initial working exports
 
@@ -66,11 +66,11 @@ This is the shortest route for teammates who need the normalized GIS inventory a
 
 ```powershell
 # Export primary/secondary lines, switches, poles, damage, fire, and ambulance data.
-node scripts/export-remaining-layers.js
+node scripts/dataBuildScripts/export-remaining-layers.js
 
 # Normalize the seven utility-asset layers and build their circuit lookup.
 # The filename uses "assets" in the plural.
-node scripts/build-assets-catalog.js
+node scripts/dataBuildScripts/build-assets-catalog.js
 ```
 
 Expected inventory totals:
@@ -131,20 +131,20 @@ Then run:
 
 ```powershell
 # Preserve all ordered equipment hops for every upstream premise.
-node scripts/build-upstream.js
+node scripts/dataBuildScripts/build-upstream.js
 
 # Generate the customer/transformer and customer/upstream validation reports.
-node scripts/validate-transformer-links.js
-node scripts/validate-upstream-links.js
+node scripts/dataBuildScripts/validate-transformer-links.js
+node scripts/dataBuildScripts/validate-upstream-links.js
 
 # Retain customer, upstream-transformer, and GIS references separately.
-node scripts/build-customer-network.js
+node scripts/dataBuildScripts/build-customer-network.js
 
 # Build provisional recloser-bank candidates and per-premise circuit checks.
-node scripts/build-recloser-crosswalk.js
+node scripts/dataBuildScripts/build-recloser-crosswalk.js
 
 # Join fuse identities and check location, equipment type, and customer circuit.
-node scripts/build-fuse-links.js
+node scripts/dataBuildScripts/build-fuse-links.js
 ```
 
 The original source geometry stays in the GIS exports. Full upstream chains stay in `upstream-by-premise.json`; relationship outputs use the same premise IDs and source entity identities.
