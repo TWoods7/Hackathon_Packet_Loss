@@ -10,7 +10,7 @@ Packet Loss is a HackOHIO 2026 outage-concierge prototype built with JavaScript,
 - Simulated customers without power and unrepaired-damage markers.
 - Clickable outage boundaries with affected-customer counts, damage summaries, and estimated repair effort in crew-hours.
 - Address search that highlights the nearest customer node and describes its simulated power status.
-- A chat interface with a placeholder response. It is not connected to an AI service yet.
+- An Outage Assistant chatbot (Claude Sonnet 5.5 with tool calls). Searching an address, street, or area switches to a full-page chat with a short summary, where you can ask follow-up questions. A large **Back to map** button (or the browser's Back button) returns to the map. It searches your address, forecasts outage risk, estimates a restoration range, checks alert eligibility, drafts notifications, and can move the map's storm slider. See [Outage Assistant](#outage-assistant).
 
 Outages come from the supplied damage snapshot, not a live utility feed. Repair effort is a labor estimate, not a promised restoration time. Address search uses the nearest customer as a proxy; it does not verify that an address belongs to that service account.
 
@@ -62,6 +62,13 @@ Use a Google Cloud project with the **Maps JavaScript API** and **Geocoding API*
 
 `.env` is ignored by Git, so each teammate must configure it locally. Vite includes `VITE_` variables in browser code; this Maps key is a browser credential. Keep server-side secrets out of these variables.
 
+To enable the chatbot, also set a server-only Anthropic API key in `.env`:
+
+```dotenv
+# Used only by the dev server's /api/chat route; no VITE_ prefix, so it never reaches the browser.
+ANTHROPIC_API_KEY=your_anthropic_key
+```
+
 ### 3. Start the app
 
 ```sh
@@ -79,6 +86,16 @@ If port 5173 is occupied, Vite may choose another port. Use the printed URL and 
 On the map, legend checkboxes start unchecked. Enable **Overhead**, **Underground**, **Unknown**, **Life support**, **No power**, or **Damaged equipment** to show those markers. Outage boundaries are displayed independently of these checkboxes. Click a boundary for its details. After searching an address, enable **Nearest to you** to show the address-to-customer connection.
 
 Restart the development server after changing `.env`.
+
+## Outage Assistant
+
+Searching a location opens the full-page chat view (`map.js` fires a `location-searched` event that `chatbot.js` turns into a summary request). The chat covers the map instead of replacing it, so the map stays loaded and the assistant's tools keep working on it. It talks to `/api/chat`, a route the Vite dev and preview servers add (`server/chat.js`). The server adds the system prompt and tool definitions (`server/prompt.js`) and relays one turn at a time to Claude. When Claude calls a tool, the browser runs it against the live map state (`src/assistantTools.js`), then sends the result back. This means the chat and the map always agree.
+
+- **Prompting:** the system prompt holds the rules, the alert rules, the message templates, and one worked example that walks through the steps (look up the address, set the storm, get the risk, get the range) before the answer. Claude ends each prediction with a plain-language `<explanation>` of the data and assumptions behind it, which the chat shows collapsed under "How I got this". Claude's own thinking stays internal: asking it to print its reasoning trips the API's `reasoning_extraction` safety check.
+- **Tools:** `search_address`, `get_current_status`, `set_storm_severity`, `get_outage_risk`, `estimate_restoration` (crews and access are scenario inputs), and `check_alert_eligibility`. All numbers come from `src/restorationModel.js`.
+- **Privacy and safety:** tool results never include premise IDs, coordinates, device IDs, or life-support flags. The server accepts only user and assistant turns, so the browser can't change the system prompt. The server log records tool names and token counts, never message text. Low-confidence locations get an explicit fallback message.
+
+`npm run build` output has no `/api/chat` route. Use `npm run preview` (or add a small Node server) to keep the chatbot working after a build.
 
 ## Available commands
 

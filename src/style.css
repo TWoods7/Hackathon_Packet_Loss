@@ -344,9 +344,13 @@ body {
   font-size: 0.75rem;
 }
 
-/* Storm severity slider and heatmap key. */
+/* Storm severity slider and heatmap key, in the map's bottom-right corner
+   (above Google's attribution line). */
 .storm-panel {
-  width: 100%;
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  width: min(320px, calc(100% - 24px));
   padding: 10px 14px;
   background: var(--nav-bg);
   border: 1px solid var(--border);
@@ -389,107 +393,91 @@ body {
     rgb(var(--map-heat-4)), rgb(var(--map-heat-5)), rgb(var(--map-heat-6)));
 }
 
-/* Chatbot: a floating button that expands into a chat panel */
-#chatbot {
-  position: fixed;
-  right: 20px;
-  bottom: 28px;
-  z-index: 10;
-}
-
-.chatbot-toggle {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  color: #fff;
-  background: var(--accent);
-  border: none;
-  border-radius: 50%;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  cursor: pointer;
-  transition:
-    transform 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.chatbot-toggle:hover {
-  transform: scale(1.06);
-}
-
-.chatbot-panel {
+/* Chatbot: a full-page view over the map, opened by searching a location.
+   It covers the map instead of replacing it, so the map keeps its size and
+   state while the assistant's tools use it. */
+.chat-view {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  inset: 0;
+  z-index: 20;
   display: flex;
   flex-direction: column;
-  width: min(360px, calc(100vw - 32px));
-  height: min(480px, calc(100vh - 120px));
-  background: var(--nav-bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  overflow: hidden;
-  /* Closed state: shrunk into the button's corner and hidden */
-  transform-origin: bottom right;
-  transform: scale(0.15);
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    transform 0.2s ease,
-    opacity 0.2s ease,
-    visibility 0s linear 0.2s;
+  background: var(--bg);
 }
 
-#chatbot.open .chatbot-panel {
-  transform: scale(1);
-  opacity: 1;
-  visibility: visible;
-  transition:
-    transform 0.2s ease,
-    opacity 0.2s ease;
+.chat-view[hidden] {
+  display: none;
 }
 
-#chatbot.open .chatbot-toggle {
-  transform: scale(0);
-  opacity: 0;
-  pointer-events: none;
-}
-
-.chatbot-header {
+.chat-view-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  color: #fff;
-  background: var(--accent);
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--border);
 }
 
-.chatbot-close {
-  padding: 0 4px;
-  font-size: 1.5rem;
-  line-height: 1;
-  color: inherit;
-  background: none;
+/* Large, high-contrast so it's always obvious how to get back. */
+.back-to-map {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px 10px 12px;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
   border: none;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   cursor: pointer;
+}
+
+.back-to-map:hover {
+  filter: brightness(1.1);
+}
+
+.back-to-map:focus-visible,
+.open-chat:focus-visible {
+  outline: 3px solid var(--fg);
+  outline-offset: 2px;
+}
+
+/* On the map: return to a conversation already in progress. */
+.open-chat {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--nav-bg);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.open-chat[hidden] {
+  display: none;
 }
 
 .chatbot-messages {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  gap: 10px;
+  padding: 20px max(16px, calc((100% - 760px) / 2));
   overflow-y: auto;
   background: var(--bg);
 }
 
 .chatbot-message {
   max-width: 80%;
-  padding: 8px 12px;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  line-height: 1.5;
   border-radius: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -513,10 +501,43 @@ body {
   color: var(--muted);
 }
 
+/* Assistant replies rendered from Markdown: normal wrapping, compact spacing. */
+.chatbot-message.rich {
+  max-width: 90%;
+  white-space: normal;
+}
+
+.chatbot-message.rich p,
+.chatbot-message.rich ul {
+  margin: 0 0 6px;
+}
+
+.chatbot-message.rich ul {
+  padding-left: 18px;
+}
+
+.chatbot-explanation {
+  margin-top: 8px;
+  padding-top: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.chatbot-explanation summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.chatbot-explanation > div {
+  margin-top: 6px;
+}
+
 .chatbot-form {
   display: flex;
   gap: 8px;
-  padding: 10px;
+  padding: 12px max(16px, calc((100% - 760px) / 2));
+  background: var(--nav-bg);
   border-top: 1px solid var(--border);
 }
 

@@ -9,6 +9,7 @@ import {
   stormForecast,
 } from "./outages.js";
 import { CREWS, CREW_SIZE } from "./restorationModel.js";
+import { registerMapApi } from "./assistantTools.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
@@ -502,6 +503,13 @@ async function initMap() {
   stormSlider.addEventListener("input", () => {
     if (stormFrame === null) stormFrame = requestAnimationFrame(updateStorm);
   });
+  // Move the slider from code (the chatbot) and redraw right away.
+  const setStormSeverity = (percent) => {
+    if (stormFrame !== null) cancelAnimationFrame(stormFrame);
+    stormSlider.value = String(percent);
+    updateStorm();
+    return outage.forecast;
+  };
   updateStorm();
 
 
@@ -534,7 +542,34 @@ async function initMap() {
     resultEl.innerHTML = html;
   };
 
-  // Find the entered address and highlight its nearest customer on the map.
+  // Find an address, highlight its nearest customer on the map, and show the result.
+  // Used by the search form and the chatbot's search_address tool.
+  const searchAddress = async (query) => {
+    const result = await geocode(geocoder, query, serviceBounds);
+    const loc = result.geometry.location;
+    const address = { lat: loc.lat(), lng: loc.lng() };
+    const { customer: nearest, distance } = findNearestCustomer(customers, address);
+
+    currentSearch = { address, nearest, distance, formattedAddress: result.formatted_address };
+    redraw();
+
+    const view = new google.maps.LatLngBounds();
+    view.extend(address);
+    view.extend({ lat: nearest.lat, lng: nearest.lng });
+    map.fitBounds(view, 80);
+    if (map.getZoom() > 18) map.setZoom(18);
+
+    input.value = result.formatted_address;
+    showResult(`
+      <div><strong>${result.formatted_address}</strong></div>
+      <div>Nearest node: ${formatDistance(distance)} away</div>
+      <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
+      <div class="simulation-note">${SIMULATION_NOTE}</div>
+    `);
+    return { formattedAddress: result.formatted_address, customer: nearest, distance };
+  };
+
+  // Search for the address typed into the form.
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const query = input.value.trim();
@@ -542,31 +577,30 @@ async function initMap() {
 
     button.disabled = true;
     try {
-      const result = await geocode(geocoder, query, serviceBounds);
-      const loc = result.geometry.location;
-      const address = { lat: loc.lat(), lng: loc.lng() };
-      const { customer: nearest, distance } = findNearestCustomer(customers, address);
-
-      currentSearch = { address, nearest };
-      redraw();
-
-      const view = new google.maps.LatLngBounds();
-      view.extend(address);
-      view.extend({ lat: nearest.lat, lng: nearest.lng });
-      map.fitBounds(view, 80);
-      if (map.getZoom() > 18) map.setZoom(18);
-
-      showResult(`
-        <div><strong>${result.formatted_address}</strong></div>
-        <div>Nearest node: ${formatDistance(distance)} away</div>
-        <div class="power-status${noPower[nearest.index] ? " no-power" : ""}">${powerStatus(nearest)}</div>
-        <div class="simulation-note">${SIMULATION_NOTE}</div>
-      `);
+      const { formattedAddress } = await searchAddress(query);
+      // chatbot.js listens for this and asks the assistant for a summary.
+      document.dispatchEvent(new CustomEvent("location-searched", { detail: { query, formattedAddress } }));
     } catch (err) {
       showResult(err.message, true);
     } finally {
       button.disabled = false;
     }
+  });
+
+  // Let the chatbot's tools read this map's state and drive it.
+  registerMapApi({
+    grid,
+    forecastInputs,
+    zoneByCustomer,
+    damageSummary,
+    searchAddress,
+    setStormSeverity,
+    getSeverity: () => Number(stormSlider.value) / 100,
+    getSelection: () => currentSearch && {
+      customer: currentSearch.nearest,
+      distance: currentSearch.distance,
+      formattedAddress: currentSearch.formattedAddress,
+    },
   });
 }
 

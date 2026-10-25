@@ -110,10 +110,11 @@ export function prepareForecast(grid) {
 }
 
 // Forecast outages for a storm severity from 0 (calm) to 1 (the worst storm in the data).
-export function stormForecast(grid, prepared, severity) {
+// crews: optional repair-crew count; defaults to CREWS in restorationModel.js.
+export function stormForecast(grid, prepared, severity, crews) {
   const customers = grid.customerChains.length;
   const expectedHours = new Float32Array(customers);
-  const result = { severity, expectedHours, brokenPoles: 0, customersOut: 0, typicalHours: 0, stormClearHours: 0 };
+  const result = { severity, scale: 0, expectedHours, brokenPoles: 0, customersOut: 0, typicalHours: 0, stormClearHours: 0 };
   if (severity <= 0) return result;
 
   // Find the storm scale that breaks, on average, the requested share of the
@@ -137,7 +138,7 @@ export function stormForecast(grid, prepared, severity) {
     (sum, row) => sum + failureChance(scale, row[3]) * repairClockHours(row[4], multiplier),
     0,
   );
-  const clearHours = stormClearHours(totalClockHours);
+  const clearHours = stormClearHours(totalClockHours, crews);
 
   let customersOut = 0;
   let hoursOut = 0;
@@ -151,6 +152,7 @@ export function stormForecast(grid, prepared, severity) {
 
   return {
     severity,
+    scale,
     expectedHours,
     brokenPoles: target,
     customersOut,

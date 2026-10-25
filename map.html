@@ -22,11 +22,12 @@
     <div class="map-controls">
       <div class="search-panel">
         <form id="search-form">
-          <input id="search-input" type="search" placeholder="Enter your home address" autocomplete="street-address"
+          <input id="search-input" type="search" placeholder="Enter an address, street, or area" autocomplete="street-address"
             required />
           <button type="submit">Search</button>
         </form>
         <div id="search-result" hidden></div>
+        <button id="open-chat" class="open-chat" type="button" hidden>Back to your conversation &rarr;</button>
       </div>
       <section id="hull-panel" class="hull-panel" aria-hidden="true" inert aria-labelledby="hull-panel-title">
         <div class="hull-panel-inner">
@@ -39,20 +40,6 @@
           </div>
         </div>
       </section>
-      <section class="storm-panel" aria-labelledby="storm-title">
-        <div class="storm-header">
-          <label id="storm-title" for="storm-severity">Storm severity</label>
-          <output id="storm-value" for="storm-severity">0%</output>
-        </div>
-        <input id="storm-severity" type="range" min="0" max="100" step="5" value="0" autocomplete="off" />
-        <div class="storm-scale"><span>Calm</span><span>Worst on record</span></div>
-        <p id="storm-summary" aria-live="polite"></p>
-        <div id="heat-legend" hidden>
-          <div class="heat-bar"></div>
-          <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
-        </div>
-        <p id="storm-assumptions" class="simulation-note"></p>
-      </section>
       <div class="legend">
         <strong>Outages</strong>
         <div id="customer-count">Loading…</div>
@@ -64,25 +51,36 @@
             style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
       </div>
     </div>
-  </div>
-
-  <div id="chatbot">
-    <button class="chatbot-toggle" type="button" aria-label="Open chat" aria-expanded="false"
-      aria-controls="chatbot-panel">
-      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-        <path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linejoin="round" />
-      </svg>
-    </button>
-
-    <section id="chatbot-panel" class="chatbot-panel" role="dialog" aria-label="Outage assistant" aria-hidden="true">
-      <header class="chatbot-header">
+    <section class="storm-panel" aria-labelledby="storm-title">
+      <div class="storm-header">
+        <label id="storm-title" for="storm-severity">Storm severity</label>
+        <output id="storm-value" for="storm-severity">0%</output>
+      </div>
+      <input id="storm-severity" type="range" min="0" max="100" step="5" value="0" autocomplete="off" />
+      <div class="storm-scale"><span>Calm</span><span>Worst on record</span></div>
+      <p id="storm-summary" aria-live="polite"></p>
+      <div id="heat-legend" hidden>
+        <div class="heat-bar"></div>
+        <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
+      </div>
+      <p id="storm-assumptions" class="simulation-note"></p>
+    </section>
+    <!-- Full-page assistant. Searching a location opens it over the map; the map
+         stays loaded underneath so the assistant's tools can keep using it. -->
+    <section id="chatbot" class="chat-view" aria-label="Outage assistant" hidden>
+      <header class="chat-view-bar">
+        <button class="back-to-map" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg>
+          Back to map
+        </button>
         <strong>Outage Assistant</strong>
-        <button class="chatbot-close" type="button" aria-label="Close chat">&times;</button>
       </header>
       <div class="chatbot-messages" aria-live="polite"></div>
       <form class="chatbot-form">
-        <input class="chatbot-input" type="text" placeholder="Ask about outages near you…" autocomplete="off"
+        <input class="chatbot-input" type="text" placeholder="Ask a follow-up question…" autocomplete="off"
           required />
         <button type="submit">Send</button>
       </form>

@@ -86,8 +86,9 @@ export function failureChance(stormScale, weight) {
 }
 
 // How long all crews together need to clear every expected repair in the storm.
-export function stormClearHours(totalRepairClockHours) {
-  return totalRepairClockHours / CREWS;
+// crews: override CREWS to explore staffing scenarios (the chatbot does this).
+export function stormClearHours(totalRepairClockHours, crews = CREWS) {
+  return totalRepairClockHours / crews;
 }
 
 // Hours without power if a customer loses it: their own repair, plus on average
