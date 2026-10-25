@@ -3,7 +3,7 @@
 // and the result goes back to Claude. Results are filtered for privacy: no
 // premise IDs, coordinates, device IDs, or life-support flags ever leave here.
 import { stormForecast } from "./outages.js";
-import { CREWS, CREW_SIZE, failureChance, repairClockHours, hoursWithoutPower } from "./restorationModel.js";
+import { CREWS, failureChance, repairClockHours, hoursWithoutPower, expectedRepairsOnPath } from "./restorationModel.js";
 
 // Filled in by map.js once the map and data have loaded.
 let mapApi = null;
@@ -83,19 +83,69 @@ function protectiveDevices(customer) {
     .filter((type) => type !== "Transformer").length;
 }
 
+// Customer counts are rounded so a small group can't be singled out.
+function roughCount(n) {
+  return n < 50 ? "fewer than 50" : `about ${(Math.round(n / 50) * 50).toLocaleString()}`;
+}
+
+// Where a repair sits, in plain words (no device IDs). onYourLine: whether it
+// is between this home and the substation or on another branch of the outage.
+function repairPlace(device, onYourLine) {
+  const type = mapApi.grid.devices[device].type;
+  if (type === "Circuit breaker") return "the main line leaving the substation";
+  if (type === "Transformer") return onYourLine ? "the transformer that serves your street" : "a transformer on a nearby street";
+  return onYourLine ? "a protective device on your line" : "a protective device on a nearby branch";
+}
+
+// Today's outage, step by step: the repairs on this home's line in the order a
+// crew restores them (restorationOrder in restorationModel.js), and which step
+// brings this home back.
+function outageSteps(customer) {
+  const zone = mapApi.zoneByCustomer.get(customer.index);
+  const yourStep = mapApi.stepOfCustomer[customer.index];
+  const chain = mapApi.grid.customerChains[customer.index];
+  const steps = zone.steps.map((step, i) => ({
+    step: i + 1,
+    repair: `${repairPlace(step.device, chain.includes(step.device))} (${mapApi.damageSummary(step.damages)})`,
+    on_your_line: chain.includes(step.device),
+    customers_back_after_this_step: roughCount(step.customersRestored),
+    hours_from_start: round1(step.doneAfterHours),
+  }));
+  const ownRepairs = steps.filter((s) => s.on_your_line);
+  return {
+    steps,
+    your_step: yourStep + 1,
+    total_steps: steps.length,
+    repairs_on_your_line: ownRepairs.length,
+    // Hours if a crew went straight to this home's repairs and skipped the rest.
+    own_line_hours: round1(zone.steps.filter((s) => chain.includes(s.device)).reduce((sum, s) => sum + s.hours, 0)),
+    hours_until_your_step: round1(zone.steps[yourStep].doneAfterHours),
+  };
+}
+
 // Today's simulated outage status, in plain words.
 function currentStatus(customer) {
   const chain = mapApi.grid.customerChains[customer.index];
   if (!chain.length) return { power: "unknown", detail: "No network data for this location." };
   const zone = mapApi.zoneByCustomer.get(customer.index);
   if (!zone) return { power: "on", detail: "No reported damage on the lines feeding this location." };
+  const { your_step, total_steps, repairs_on_your_line } = outageSteps(customer);
   return {
     power: "off",
     cause: `Damaged equipment upstream: ${mapApi.damageSummary(zone.damages)}`,
     protective_device_tripped: mapApi.grid.devices[zone.device].type.toLowerCase(),
-    customers_in_outage: zone.customers.length < 50 ? "fewer than 50" : `about ${Math.round(zone.customers.length / 50) * 50}`,
+    customers_in_outage: roughCount(zone.customers.length),
     repair_work_hours: Math.round(zone.crewHours),
+    restoration_step: `step ${your_step} of ${total_steps}`,
+    repairs_on_your_line,
   };
+}
+
+// Plain-language place in the storm repair queue.
+function queuePlace(share) {
+  if (share < 0.33) return "near the front";
+  if (share < 0.66) return "around the middle";
+  return "toward the back";
 }
 
 // Area-wide summary of a storm forecast.
@@ -199,32 +249,61 @@ const handlers = {
     if (severity === 0) {
       const zone = mapApi.zoneByCustomer.get(customer.index);
       if (!zone) return { note: "No storm (severity 0%) and no current outage here, so there is nothing to restore." };
-      // Today's outage: one crew on this outage's repairs, double it for the high end.
-      const hours = zone.crewHours / CREW_SIZE;
+      // Today's outage: one crew restores it step by step, upstream repairs first.
+      const plan = outageSteps(customer);
+      const accessHours = access_issue ? repairClockHours(adders.restrictedAccess.hours, multiplier) * plan.repairs_on_your_line : 0;
+      const typical = plan.hours_until_your_step + accessHours;
       return {
         scenario: "current outage",
-        low_hours: round1(hours * 0.5),
-        typical_hours: round1(hours),
-        high_hours: round1(hours * 2),
+        // Low: crews go straight to this home's repairs. High: double the typical for surprises.
+        low_hours: round1(plan.own_line_hours + accessHours),
+        typical_hours: round1(typical),
+        high_hours: round1(typical * 2),
+        restoration_steps: plan.steps,
+        your_step: `step ${plan.your_step} of ${plan.total_steps}`,
         confidence: confidence.level,
+        factors: [
+          plan.repairs_on_your_line > 1
+            ? `${plan.repairs_on_your_line} repairs are needed between this home and the substation. Crews fix the one closer to the substation first, because nothing past it can come back until it's done.`
+            : "One repair is needed on this home's line.",
+          plan.your_step > 1
+            ? `Crews do the repairs that bring back the most customers first, so this home's power returns at step ${plan.your_step} of ${plan.total_steps}.`
+            : "This home's repair is the first step, because it brings back the most customers.",
+          access_issue
+            ? `Access problems add about ${adders.restrictedAccess.hours} hours of work per repair.`
+            : "Assumes crews can reach the damage without trouble.",
+        ],
+        could_change_if: "crews find more damage, more crews are sent, or the road to the damage is blocked",
         note: NOTE,
       };
     }
 
     const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount);
     const clear = forecast.stormClearHours;
+    const exposure = mapApi.forecastInputs.exposure[customer.index];
+    const share = mapApi.forecastInputs.queueShare[customer.index];
+    const lastDevice = mapApi.forecastInputs.lastRepairDevice[customer.index];
+    const repairsOnPath = expectedRepairsOnPath(forecast.scale, exposure);
     return {
       scenario: `storm at ${Math.round(severity * 100)}% severity`,
       crews: crewCount,
       // Low: a crew reaches this repair first. High: it's the last repair of the storm.
       low_hours: round1(ownRepair),
-      typical_hours: round1(hoursWithoutPower(ownRepair, clear)),
+      typical_hours: round1(hoursWithoutPower(ownRepair, clear, share)),
       high_hours: round1(ownRepair + clear),
+      expected_repairs_on_your_line: round1(repairsOnPath),
+      place_in_repair_queue: queuePlace(share),
       confidence: confidence.level,
       confidence_reason: confidence.reason,
       factors: [
         `Repair work on this home's line: about ${round1(ownRepair)} hours for one crew, including travel and setup.`,
-        `Storm-wide backlog: ${crewCount} crews need about ${round1(clear)} hours to clear every expected repair; your place in the queue sets where you fall in the range.`,
+        `Storm-wide backlog: ${crewCount} crews need about ${round1(clear)} hours to clear every expected repair.`,
+        lastDevice >= 0
+          ? `Crews fix repairs that bring back the most customers first. The last repair this home would need restores ${roughCount(mapApi.grid.devices[lastDevice].customers)} customers, so it is ${queuePlace(share)} of the queue.`
+          : "No storm history on this line, so we assume the middle of the repair queue.",
+        repairsOnPath >= 1.5
+          ? `If the power goes out, about ${Math.round(repairsOnPath)} repairs are likely needed between this home and the substation; the ones closer to the substation are fixed first.`
+          : "If the power goes out, most likely one repair is needed on this home's line.",
         access_issue
           ? `Access problems add about ${adders.restrictedAccess.hours} hours of work per repair.`
           : "Assumes crews can reach the damage without trouble.",

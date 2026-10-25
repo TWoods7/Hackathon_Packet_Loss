@@ -2,7 +2,7 @@
 // number in the app comes from. Change a formula here and it changes everywhere:
 //   - scripts/dataBuildScripts/build-outage-grid.js uses repairLaborHours
 //     (re-run `npm run data:grid` after changing it, since results are stored in grid.json)
-//   - src/outages.js uses the rest for today's outages and the storm forecast
+//   - src/outages.js uses the rest for today's outages (including restoration steps) and the storm forecast
 //   - src/map.js shows CREWS / CREW_SIZE in the storm panel
 // This file must stay plain JavaScript (no browser or Node APIs) so both can import it.
 
@@ -91,10 +91,51 @@ export function stormClearHours(totalRepairClockHours, crews = CREWS) {
   return totalRepairClockHours / crews;
 }
 
-// Hours without power if a customer loses it: their own repair, plus on average
-// waiting for half the storm backlog before a crew reaches them.
-export function hoursWithoutPower(ownRepairClockHours, clearHours) {
-  return ownRepairClockHours + clearHours / 2;
+// Repairs a customer's line needs if it loses power at all. Every failure between
+// the home and the substation must be fixed before power returns, and given at
+// least one failure, the expected count is weight / (1 - e^-weight).
+// Used to explain the estimate; separate crews work these in parallel, so it
+// doesn't add to hoursWithoutPower.
+export function expectedRepairsOnPath(stormScale, weight) {
+  const expected = stormScale * weight;
+  return expected > 1e-6 ? expected / (1 - Math.exp(-expected)) : 1;
+}
+
+// Hours without power if a customer loses it: their own repair, plus waiting
+// for their place in the storm backlog. queueShare (0-1) is how far through the
+// backlog crews are when they reach the last repair on this customer's line
+// (see prepareForecast in outages.js). Repairs that restore more customers go
+// first, so repairs upstream of it are usually done by then.
+export function hoursWithoutPower(ownRepairClockHours, clearHours, queueShare = 0.5) {
+  return ownRepairClockHours + clearHours * queueShare;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Step restoration for today's outages
+// ---------------------------------------------------------------------------
+
+// Order an outage's repairs the way crews restore power: a repair can't bring
+// anyone back until every repair upstream of it is done, and among the repairs
+// that are ready, the one serving the most customers per hour of work goes first.
+// One crew works through them in turn.
+// jobs: [{ id, hours, served, after }], where served = customers whose line runs
+// through this repair and after = Set of job ids upstream of it.
+// Returns the jobs in repair order, each with doneAfterHours from the start.
+export function restorationOrder(jobs) {
+  const priority = (job) => job.served / Math.max(job.hours, 0.1);
+  const done = new Set();
+  const pending = [...jobs];
+  const order = [];
+  let clock = 0;
+  while (pending.length) {
+    const ready = pending.filter((job) => [...job.after].every((id) => done.has(id)));
+    const next = (ready.length ? ready : pending).reduce((a, b) => (priority(b) > priority(a) ? b : a));
+    pending.splice(pending.indexOf(next), 1);
+    done.add(next.id);
+    clock += next.hours;
+    order.push({ ...next, doneAfterHours: clock });
+  }
+  return order;
 }
 
 // The heatmap value: chance of losing power x hours it would last.

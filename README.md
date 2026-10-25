@@ -164,6 +164,10 @@ For the simulation, unrepaired damage trips associated devices. A customer is ma
 
 Crew-hours are calculated from damage labor recipes and the indirect labor multiplier. They do not account for a complete crew schedule, resource availability, or an actual restoration deadline. Some damage-to-network links use spatial fallbacks; `grid.json` retains a `traceMethod` for inspecting those assumptions.
 
+**Restoration order (upstream dependencies and step restoration).** Power can't return past a damaged device until every damaged device between it and the substation is repaired. For each current outage, `restorationOrder` in `src/restorationModel.js` orders the repairs: a repair is ready once everything upstream of it is fixed, and among ready repairs, the one serving the most customers per hour of work goes first. One crew works through them in turn, so each step has a time and a count of customers it brings back. The outage panel lists the steps, the address search says which step restores that location, and the assistant explains it.
+
+For the storm forecast, crews are assumed to fix repairs that restore the most customers first. Each home's place in that queue comes from the last at-risk device on its line (fewer customers behind it = later), and its expected hours without power are its own repair plus that share of the storm backlog. The assistant also reports how many repairs are likely on the home's line if it loses power. Separate crews work those in parallel, so the count explains the estimate but doesn't add to it.
+
 When adding features in a module under `src/`, reuse the outage functions:
 
 ```js

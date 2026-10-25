@@ -162,15 +162,31 @@ function damageSummary(damages) {
   return Object.entries(counts).map(([type, n]) => `${n} ${type}`).join(", ") || "Unknown";
 }
 
+// Small step counts are rounded so a step can't point at one household.
+function roughCustomers(n) {
+  return n < 10 ? "fewer than 10" : n.toLocaleString();
+}
+
 // Title and multi-line text for an outage's side panel.
 // Life-support counts and circuit IDs stay out: they are internal or could identify a household.
-function outageDetails(zone, device) {
+function outageDetails(zone, device, devices) {
+  const steps = zone.steps.length > 1
+    ? [
+        "",
+        "Restoration steps (one crew, repairs closer to the substation first):",
+        ...zone.steps.map((step, i) =>
+          `${i + 1}. ${devices[step.device].type} repair (${damageSummary(step.damages)}): ` +
+          `${roughCustomers(step.customersRestored)} customers back in ${formatHours(step.doneAfterHours)}`),
+      ]
+    : [];
   return {
     title: `Outage: ${device.type.toLowerCase()} tripped`,
     text: [
       `${zone.customers.length.toLocaleString()} customers without power`,
       `Cause: ${damageSummary(zone.damages)}`,
       `Estimated repair: ${Math.round(zone.crewHours)} crew-hours`,
+      ...steps,
+      "",
       SIMULATION_NOTE,
     ].join("\n"),
   };
@@ -359,7 +375,7 @@ async function initMap() {
   const infoWindow = new InfoWindow();
 
   // Work out today's outages from the unrepaired damage.
-  const { noPower, zones } = computeOutages(grid, trippedDevices(grid.damages), grid.damages);
+  const { noPower, zones, stepOfCustomer } = computeOutages(grid, trippedDevices(grid.damages), grid.damages);
   const zoneByCustomer = new Map();
   for (const zone of zones) for (const i of zone.customers) zoneByCustomer.set(i, zone);
 
@@ -405,7 +421,7 @@ async function initMap() {
   const zoneByLayerId = new Map();
   let boundaryLayers = zones.map((zone) => {
     const id = `outage-${zone.device}`;
-    const details = outageDetails(zone, grid.devices[zone.device]);
+    const details = outageDetails(zone, grid.devices[zone.device], grid.devices);
     zoneByLayerId.set(id, zone);
     return new ScatterplotLayer({
       id,
@@ -539,8 +555,12 @@ async function initMap() {
     const zone = zoneByCustomer.get(customer.index);
     if (!zone) return "Power on: no reported damage upstream of this location.";
     const device = grid.devices[zone.device];
+    const step = stepOfCustomer[customer.index];
+    const restore = zone.steps.length > 1
+      ? ` Restored at step ${step + 1} of ${zone.steps.length}, power back in ${formatHours(zone.steps[step].doneAfterHours)}.`
+      : "";
     return `No power: inside a ${device.type.toLowerCase()} outage ` +
-      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} crew-hours of repair.`;
+      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} crew-hours of repair.${restore}`;
   };
 
   const geocoder = new Geocoder();
@@ -606,6 +626,7 @@ async function initMap() {
     grid,
     forecastInputs,
     zoneByCustomer,
+    stepOfCustomer,
     damageSummary,
     searchAddress,
     setStormSeverity,

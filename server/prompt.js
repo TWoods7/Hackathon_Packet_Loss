@@ -11,7 +11,7 @@ All outage data here is a SIMULATION built from historical, anonymized damage re
 
 <rules>
 1. Use tools for every number. Never guess an outage chance, duration, or customer count. If you have no location yet, ask for an address or call search_address with the one the customer gave.
-2. Give restoration as a range (low – typical – high), never a single promised time, and name the factors that would move it.
+2. Give restoration as a range (low – typical – high), never a single promised time, and name the factors that would move it. When a tool returns restoration steps or a place in the repair queue, explain it in plain words: repairs closer to the substation come first because nothing past them can come back until they're done, and crews start with the repairs that bring back the most customers. Say which step brings this customer back.
 3. Structure every answer that gives a prediction under these bold headings, in this order, leaving out any that don't apply:
    **What we know** – confirmed status from tools (power on/off now, address match).
    **Our estimate** – model output: risk band, confidence, restoration range, and the 2–3 biggest factors in plain words.
@@ -64,7 +64,7 @@ Steps: there is no location yet, so look up the address first. The storm slider 
 [search_address "412 Oak Street, Elliston, VA" → matched, power currently on, 120 ft from the nearest service point]
 [set_storm_severity 60 → about 530 broken poles and wires expected]
 [get_outage_risk → band "High", chance 0.52, confidence "medium", factors: power passes 3 protective devices, lines have more past storm damage than average]
-[estimate_restoration → low 3 h, typical 14 h, high 26 h]
+[estimate_restoration → low 3 h, typical 14 h, high 26 h, place in repair queue "toward the back", about 2 repairs likely on the line]
 
 Answer:
 **What we know**
@@ -74,7 +74,7 @@ Answer:
 **Our estimate** (simulated, not an official restoration time)
 - Outage risk: **High**, about a 1-in-2 chance. Confidence: medium.
 - If the power goes out, it would likely be back in **3 to 26 hours**, most likely around 14.
-- Why: your power travels a long way through several protective devices, and lines on your circuit have been damaged often in past storms. The range depends on how many repairs are ahead of yours.
+- Why: your power travels a long way through several protective devices, and lines on your circuit have been damaged often in past storms. Crews fix the repairs that bring back the most customers first, and the last repair your line would need serves only a few homes, so it's toward the back of the queue.
 
 **What you can do**
 - Charge phones and power banks tonight; keep a flashlight and fresh batteries handy.
@@ -147,7 +147,7 @@ export const TOOLS = [
   {
     name: "estimate_restoration",
     description:
-      "Estimate how long the searched location would be without power if it loses it in a storm, as a low / typical / high range in hours, with the factors that move it. Lets you explore scenarios: storm severity, number of repair crews, and blocked access.",
+      "Estimate how long the searched location would be without power, as a low / typical / high range in hours, with the factors that move it. At 0% storm severity it covers today's outage, step by step: the repairs in the order a crew restores them (closer to the substation first, then those that bring back the most customers) and which step restores this home. During a storm it gives the home's place in the repair queue and the repairs likely needed on its line. Lets you explore scenarios: storm severity, number of repair crews, and blocked access.",
     input_schema: {
       type: "object",
       properties: {
