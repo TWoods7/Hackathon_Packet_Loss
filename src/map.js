@@ -162,16 +162,31 @@ function damageSummary(damages) {
   return Object.entries(counts).map(([type, n]) => `${n} ${type}`).join(", ") || "Unknown";
 }
 
+// Small step counts are rounded so a step can't point at one household.
+function roughCustomers(n) {
+  return n < 10 ? "fewer than 10" : n.toLocaleString();
+}
+
 // Title and multi-line text for an outage's side panel.
 // Life-support counts and circuit IDs stay out: they are internal or could identify a household.
-function outageDetails(zone, device) {
+function outageDetails(zone, device, devices) {
+  const steps = zone.steps.length > 1
+    ? [
+        "",
+        "Restoration steps (one crew, repairs closer to the substation first):",
+        ...zone.steps.map((step, i) =>
+          `${i + 1}. ${devices[step.device].type} repair (${damageSummary(step.damages)}): ` +
+          `${roughCustomers(step.customersRestored)} customers back in ${formatHours(step.doneAfterHours)}`),
+      ]
+    : [];
   return {
     title: `Simulated outage: ${device.type.toLowerCase()} tripped`,
     text: [
       `${zone.customers.length.toLocaleString()} customers without power`,
       `Cause: ${damageSummary(zone.damages)}`,
       `Estimated repair work: ${Math.round(zone.crewHours)} person-hours, including travel/setup`,
-      SIMULATION_NOTE,
+      ...steps,
+      "",
     ].join("\n"),
   };
 }
@@ -358,17 +373,28 @@ async function initMap() {
 
   const infoWindow = new InfoWindow();
 
-  // Prepare exposure once, then start with a calm simulated storm.
+    // Prepare customer exposure once and start with a calm simulated storm.
   const forecastInputs = prepareForecast(grid);
   const scenarioSeed = 2026;
-  let activeScenario = buildStormScenario(grid, forecastInputs, 0, scenarioSeed);
+  let activeScenario = buildStormScenario(
+    grid,
+    forecastInputs,
+    0,
+    scenarioSeed,
+  );
 
-  // These values change when severity changes; historical grid.damages stays intact.
+  // Replace these values whenever the active scenario changes.
   let { noPower, zones } = activeScenario;
 
-  // Keep this Map object stable because the chatbot holds a reference to it.
-  // Each update replaces its contents instead of replacing the object itself.
-  const zoneByCustomer = new Map(activeScenario.zoneByCustomer);
+  // Keep this array reference stable because the chatbot reads it too.
+  const stepOfCustomer = new Int32Array(
+    activeScenario.stepOfCustomer,
+  );
+
+  // Likewise, update this Map's contents instead of replacing its reference.
+  const zoneByCustomer = new Map(
+    activeScenario.zoneByCustomer,
+  );
 
   // Open a damage details popup at the clicked marker.
   const showDamageInfo = ({ object }) => {
@@ -406,25 +432,38 @@ async function initMap() {
   const toggleHullPanel = setupHullPanel(mapEl, updateHullSelection);
 
   // Rebuild circles and their lookups whenever the sampled outages change.
+    // Rebuild circles and lookups whenever sampled outages change.
   const zoneByLayerId = new Map();
   const boundaryIds = new Set();
 
   function buildBoundaryLayers() {
-    // Remove lookup entries belonging to the previous storm outcome.
+    // Remove lookup entries belonging to the previous scenario.
     zoneByLayerId.clear();
     boundaryIds.clear();
 
-    // Each zone gets its own layer for independent hover and selection styling.
+    // Give each outage its own selectable circle.
     return zones.map((zone) => {
       const id = `outage-${zone.device}`;
-      const details = outageDetails(zone, grid.devices[zone.device]);
+
+      // Supply the device collection so restoration steps can be described.
+      const details = outageDetails(
+        zone,
+        grid.devices[zone.device],
+        grid.devices,
+      );
+
+      // Register this circle for hover and selection handling.
       zoneByLayerId.set(id, zone);
       boundaryIds.add(id);
 
+      // Preserve the existing approximate-circle geometry and styling.
       return new ScatterplotLayer({
         id,
         data: [outageCircle(zone, customers)],
-        getPosition: (circle) => [circle.center.lng, circle.center.lat],
+        getPosition: (circle) => [
+          circle.center.lng,
+          circle.center.lat,
+        ],
         getRadius: (circle) => circle.radius,
         radiusUnits: "meters",
         stroked: true,
@@ -528,6 +567,8 @@ async function initMap() {
     activeScenario = nextScenario;
     noPower = activeScenario.noPower;
     zones = activeScenario.zones;
+    // Refresh customer restoration steps without replacing the shared array.
+    stepOfCustomer.set(activeScenario.stepOfCustomer);
     zoneByCustomer.clear();
     for (const [customer, zone] of activeScenario.zoneByCustomer) {
       zoneByCustomer.set(customer, zone);
@@ -582,8 +623,18 @@ async function initMap() {
     const zone = zoneByCustomer.get(customer.index);
     if (!zone) return "No outage generated for this location in the displayed storm scenario.";
     const device = grid.devices[zone.device];
+    // Find the repair step that restores this customer in the active sample.
+    const stepIndex = stepOfCustomer[customer.index];
+    const restorationStep = zone.steps[stepIndex];
+
+    // Describe modeled elapsed time from the start of repair work.
+    const restore = restorationStep
+      ? ` Modeled restoration: step ${stepIndex + 1} of ${zone.steps.length}, ${formatHours(restorationStep.doneAfterHours)} after repair work starts with one crew.`
+      : " Restoration-step information is unavailable.";
+
+    // Keep simulated status, repair effort, and elapsed time distinguishable.
     return `Simulated outage: a ${device.type.toLowerCase()} tripped ` +
-      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} person-hours of repair work.`;
+      `(${damageSummary(zone.damages)}), about ${Math.round(zone.crewHours)} person-hours of repair work.${restore}`;
   };
 
   const geocoder = new Geocoder();
@@ -660,6 +711,7 @@ async function initMap() {
     grid,
     forecastInputs,
     zoneByCustomer,
+    stepOfCustomer,
     damageSummary,
     searchAddress,
     setStormSeverity,

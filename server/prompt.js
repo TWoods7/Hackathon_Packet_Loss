@@ -27,7 +27,7 @@ The map and tools now use a sampled storm scenario. Interpret their results cons
 
 <rules>
 1. Use tools for every number. Never guess an outage chance, duration, or customer count. If you have no location yet, ask for an address or call search_address with the one the customer gave.
-2. Give restoration as a range (low – typical – high), never a single promised time, and name the factors that would move it.
+2. Give restoration as a range (low – typical – high), never a single promised time, and name the factors that would move it. When a tool returns restoration steps or a place in the repair queue, explain it in plain words: repairs closer to the substation come first because nothing past them can come back until they're done, and crews start with the repairs that bring back the most customers. Say which step brings this customer back.
 3. Structure every answer that gives a prediction under these bold headings, in this order, leaving out any that don't apply:
    **What we know** – the matched location and scenario setting; label modeled power status as simulated.
    **Our estimate** – model output: risk band, confidence, restoration range, and the 2–3 biggest factors in plain words.
@@ -145,7 +145,14 @@ export const TOOLS = [
   {
     name: "estimate_restoration",
     description:
-      "Estimate an assumption-based restoration planning range using repairs and backlog in the displayed sample, with optional crew/access assumptions. If the selected location has no sampled outage, returns outage_simulated false without a duration. A different severity_percent produces a hypothetical forecast without changing the map. Never invent missing range values.",
+      "Estimate an assumption-based restoration planning range. " +
+      "At the displayed severity, use sampled damage and upstream-dependent " +
+      "restoration steps when available, including which step restores the " +
+      "selected location. Return outage_simulated false without a duration " +
+      "when no outage was generated there. A different severity_percent " +
+      "produces a hypothetical forecast without changing the map and may " +
+      "include repair-queue position and expected repairs on the line. " +
+      "Support crew and access assumptions. Never invent missing range values.",
     input_schema: {
       type: "object",
       properties: {

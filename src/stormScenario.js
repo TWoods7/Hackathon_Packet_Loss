@@ -69,7 +69,7 @@ export function buildStormScenario(
   const tripped = trippedDevices(damages);
 
   // Trace those devices through customer chains to create outage groups.
-  const { noPower, zones } = computeOutages(
+  const { noPower, zones, stepOfCustomer } = computeOutages(
     grid,
     tripped,
     damages,
@@ -108,6 +108,7 @@ export function buildStormScenario(
     damages,
     tripped,
     noPower,
+    stepOfCustomer,
     zones,
     zoneByCustomer,
 

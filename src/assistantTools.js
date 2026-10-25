@@ -3,7 +3,11 @@
 // and the result goes back to Claude. Results are filtered for privacy: no
 // premise IDs, coordinates, device IDs, or life-support flags ever leave here.
 import { stormForecast } from "./outages.js";
-import { CREWS, CREW_SIZE, failureChance, repairClockHours, stormClearHours, hoursWithoutPower } from "./restorationModel.js";
+// Reuse the shared failure, queue, and restoration-range formulas.
+import {
+  CREWS, CREW_SIZE, failureChance, repairClockHours,
+  expectedRepairsOnPath, restorationRange, sampledRestorationRange,
+} from "./restorationModel.js";
 
 // Filled in by map.js once the map and data have loaded.
 let mapApi = null;
@@ -83,20 +87,76 @@ function protectiveDevices(customer) {
     .filter((type) => type !== "Transformer").length;
 }
 
+// Customer counts are rounded so a small group can't be singled out.
+function roughCount(n) {
+  return n < 50 ? "fewer than 50" : `about ${(Math.round(n / 50) * 50).toLocaleString()}`;
+}
+
+// Where a repair sits, in plain words (no device IDs). onYourLine: whether it
+// is between this home and the substation or on another branch of the outage.
+function repairPlace(device, onYourLine) {
+  const type = mapApi.grid.devices[device].type;
+  if (type === "Circuit breaker") return "the main line leaving the substation";
+  if (type === "Transformer") return onYourLine ? "the transformer that serves your street" : "a transformer on a nearby street";
+  return onYourLine ? "a protective device on your line" : "a protective device on a nearby branch";
+}
+
+// Active sampled outage, step by step: the repairs on this home's line in the order a
+// crew restores them (restorationOrder in restorationModel.js), and which step
+// brings this home back.
+function outageSteps(customer) {
+  const zone = mapApi.zoneByCustomer.get(customer.index);
+  const yourStep = mapApi.stepOfCustomer?.[customer.index];
+
+  // Reject stale or missing step data rather than guessing a duration.
+  if (!zone || !Number.isInteger(yourStep) || yourStep < 0 || yourStep >= zone.steps.length) {
+    throw new Error("Restoration-step information is unavailable for this scenario.");
+  }
+  const chain = mapApi.grid.customerChains[customer.index];
+  const steps = zone.steps.map((step, i) => ({
+    step: i + 1,
+    repair: `${repairPlace(step.device, chain.includes(step.device))} (${mapApi.damageSummary(step.damages)})`,
+    on_your_line: chain.includes(step.device),
+    customers_back_after_this_step: roughCount(step.customersRestored),
+    hours_from_start: round1(step.doneAfterHours),
+  }));
+  const ownRepairs = steps.filter((s) => s.on_your_line);
+  return {
+    steps,
+    your_step: yourStep + 1,
+    total_steps: steps.length,
+    repairs_on_your_line: ownRepairs.length,
+    // Hours if a crew went straight to this home's repairs and skipped the rest.
+    own_line_hours: zone.steps.filter((s) => chain.includes(s.device)).reduce((sum, s) => sum + s.hours, 0),
+    hours_until_your_step: zone.steps[yourStep].doneAfterHours,
+  };
+}
+
 // Read the same sampled outage state currently displayed on the map.
 function currentStatus(customer) {
   const chain = mapApi.grid.customerChains[customer.index];
   if (!chain.length) return { power: "unknown", scenario: "simulated storm", detail: "No network data for this location." };
   const zone = mapApi.zoneByCustomer.get(customer.index);
   if (!zone) return { power: "on", scenario: "simulated storm", detail: "No outage was generated here in the displayed scenario. Other possible outcomes may differ." };
+
+  // Expose the restoration step without returning internal device identities.
+  const plan = outageSteps(customer);
   return {
     power: "off",
     scenario: "simulated storm",
     cause: `Damaged equipment upstream: ${mapApi.damageSummary(zone.damages)}`,
     protective_device_tripped: mapApi.grid.devices[zone.device].type.toLowerCase(),
-    customers_in_outage: zone.customers.length < 50 ? "fewer than 50" : `about ${Math.round(zone.customers.length / 50) * 50}`,
+    customers_in_outage: roughCount(zone.customers.length),
     repair_work_hours: Math.round(zone.crewHours),
+    restoration_step: `step ${plan.your_step} of ${plan.total_steps}`,
+    repairs_on_your_line: plan.repairs_on_your_line,
   };
+}
+// Plain-language place in the storm repair queue.
+function queuePlace(share) {
+  if (share < 0.33) return "near the front";
+  if (share < 0.66) return "around the middle";
+  return "toward the back";
 }
 
 // Area-wide summary of a storm forecast.
@@ -193,6 +253,7 @@ const handlers = {
   },
 
   async estimate_restoration({ severity_percent, crews, access_issue }) {
+    // Read the selected location and requested operational assumptions.
     const selected = selection();
     if (selected.error) return selected;
     const { customer, distance } = selected;
@@ -202,69 +263,98 @@ const handlers = {
     const multiplier = mapApi.grid.meta.indirectLaborMultiplier;
     const confidence = confidenceFor(customer, distance);
 
-    // Do not estimate restoration for a location with no usable network match.
+    // A distant or disconnected match cannot support a restoration prediction.
     if (!mapApi.grid.customerChains[customer.index].length || distance > MAX_MATCH_METERS) {
       return { confidence: "low", note: "A reliable network match is unavailable, so a restoration range cannot be calculated. " + NOTE };
     }
 
-    // A staffing or access change affects repair time, not which assets failed.
-    const accessHours = access_issue ? adders.restrictedAccess.hours : 0;
+    // These inputs change repair duration without changing the failure sample.
+    const accessLaborHours = access_issue ? adders.restrictedAccess.hours : 0;
+    const share = mapApi.forecastInputs.queueShare[customer.index];
     const active = mapApi.getScenario();
 
-    // At the displayed severity, estimate work from its actual sampled repairs.
+    // At the displayed severity, use this sample's upstream-dependent steps.
     if (severity === active.severity) {
       const zone = mapApi.zoneByCustomer.get(customer.index);
       if (!zone) {
         return {
           scenario: "displayed sampled storm outcome",
           outage_simulated: false,
-          note: "No outage was generated here in this sample, so there is no sampled restoration duration. Ask for outage risk to explore other possible outcomes. " + NOTE,
+          note: "No outage was generated here in this sample, so there is no sampled restoration duration. Other possible outcomes may differ. " + NOTE,
         };
       }
 
-      // Aggregate repair labor, then reuse the existing restoration formulas.
-      const zoneLabor = zone.damages.reduce((sum, damage) => sum + damage.directHours, 0);
-      const allLabor = active.damages.reduce((sum, damage) => sum + damage.directHours, 0);
-      const ownRepair = repairClockHours(zoneLabor + accessHours, multiplier);
-      const clear = stormClearHours(repairClockHours(allLabor + accessHours, multiplier), crewCount);
+      // Sum labor inputs, then let the shared model handle all time formulas.
+      const plan = outageSteps(customer);
+      const zoneLaborHours = zone.damages.reduce((sum, damage) => sum + damage.directHours, 0);
+      const stormLaborHours = active.damages.reduce((sum, damage) => sum + damage.directHours, 0);
+      const range = sampledRestorationRange({
+        ownLineHours: plan.own_line_hours,
+        stepHours: plan.hours_until_your_step,
+        zoneLaborHours,
+        stormLaborHours,
+        repairsOnLine: plan.repairs_on_your_line,
+        accessLaborHours,
+        multiplier,
+        crews: crewCount,
+        queueShare: share,
+      });
+
+      // Return only customer-friendly steps and aggregate work information.
       return {
         scenario: "displayed sampled storm outcome",
         outage_simulated: true,
         crews: crewCount,
-        low_hours: round1(ownRepair),
-        typical_hours: round1(hoursWithoutPower(ownRepair, clear)),
-        high_hours: round1(ownRepair + clear),
+        low_hours: round1(range.lowHours),
+        typical_hours: round1(range.typicalHours),
+        high_hours: round1(range.highHours),
+        restoration_steps: plan.steps,
+        your_step: `step ${plan.your_step} of ${plan.total_steps}`,
+        repairs_on_your_line: plan.repairs_on_your_line,
+        place_in_repair_queue: queuePlace(share),
         confidence: confidence.level,
         confidence_reason: confidence.reason,
         factors: [
-          "Uses generated repairs assigned to this outage area and the sampled storm-wide repair backlog.",
-          `Assumes one crew of ${CREW_SIZE} handles this area's repairs sequentially and ${crewCount} crews address the storm backlog.`,
-          access_issue ? "Includes one declared restricted-access allowance for this area's work." : "Assumes normal repair access.",
+          `${plan.repairs_on_your_line} repairs are needed on this location's upstream path; dependent repairs wait for the repairs ahead of them.`,
+          `This location is restored at step ${plan.your_step} of ${plan.total_steps} in the area's assumed single-crew schedule.`,
+          `Step times start when the area's crew begins work; the duration range also allows for work elsewhere in the storm with ${crewCount} crews of ${CREW_SIZE}.`,
+          "The area's own work is excluded from that outside backlog to avoid double counting it.",
+          access_issue ? "Includes the declared restricted-access allowance for each repair on the selected line." : "Assumes normal access.",
         ],
-        note: "This planning range uses simple queue assumptions, not a validated statistical confidence interval. " + NOTE,
+        note: "Step times use one crew and normal access as a baseline. The range adds access and queue assumptions; it is not a statistical confidence interval. " + NOTE,
       };
     }
 
-    // A different requested severity is a hypothetical forecast, not a map change.
+    // A different severity describes a hypothetical forecast without moving the map.
     if (severity === 0) {
       return { scenario: "hypothetical calm forecast", note: "No new storm damage is expected at 0%. The displayed map scenario has not been changed. " + NOTE };
     }
 
-    // Preserve the existing expected-work model for hypothetical storm strengths.
-    const ownRepair = repairClockHours(mapApi.forecastInputs.repairHours[customer.index] + accessHours, multiplier);
+    // Preserve the team's expected repair-count and queue-position explanation.
+    const ownRepair = repairClockHours(mapApi.forecastInputs.repairHours[customer.index] + accessLaborHours, multiplier);
     const forecast = stormForecast(mapApi.grid, mapApi.forecastInputs, severity, crewCount);
-    const clear = forecast.stormClearHours;
+    const range = restorationRange(ownRepair, forecast.stormClearHours, share);
+    const lastDevice = mapApi.forecastInputs.lastRepairDevice[customer.index];
+    const exposure = mapApi.forecastInputs.exposure[customer.index];
+    const repairsOnPath = expectedRepairsOnPath(forecast.scale, exposure);
+
+    // Keep hypothetical results clearly separate from the displayed sample.
     return {
       scenario: `hypothetical forecast at ${Math.round(severity * 100)}% severity`,
       crews: crewCount,
-      low_hours: round1(ownRepair),
-      typical_hours: round1(hoursWithoutPower(ownRepair, clear)),
-      high_hours: round1(ownRepair + clear),
+      low_hours: round1(range.lowHours),
+      typical_hours: round1(range.typicalHours),
+      high_hours: round1(range.highHours),
+      expected_repairs_on_your_line: round1(repairsOnPath),
+      place_in_repair_queue: queuePlace(share),
       confidence: confidence.level,
       confidence_reason: confidence.reason,
       factors: [
-        "Uses expected repair work and backlog, rather than the displayed sample's damage list.",
-        `Assumes ${crewCount} crews of ${CREW_SIZE} and ${access_issue ? "one restricted-access allowance" : "normal access"}.`,
+        "Uses expected work and repair-queue position, rather than the displayed sample's damage list.",
+        lastDevice >= 0
+          ? `The last at-risk repair on this line serves ${roughCount(mapApi.grid.devices[lastDevice].customers)} customers, putting it ${queuePlace(share)} of the assumed queue.`
+          : "Assumes the middle of the repair queue because no at-risk device is identified.",
+        "Expected repairs on the line are an explanatory model estimate, not a list of confirmed damage.",
       ],
       note: "The displayed map scenario has not been changed. This is an assumption-based planning range. " + NOTE,
     };

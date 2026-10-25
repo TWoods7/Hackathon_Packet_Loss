@@ -8,6 +8,7 @@ import {
   stormClearHours,
   hoursWithoutPower,
   expectedHoursWithoutPower,
+  restorationOrder,
 } from "./restorationModel.js";
 
 // Turn a { fields, rows } table into an array of objects.
@@ -67,13 +68,53 @@ export function computeOutages(grid, tripped, damages) {
 
   // Crew-hours of repair work for each outage (formula in restorationModel.js).
   const multiplier = grid.meta.indirectLaborMultiplier;
+  const stepOfCustomer = new Int32Array(grid.customerChains.length).fill(-1);
   const zones = [...zonesByDevice.values()].map((zone) => ({
     ...zone,
     crewHours: crewHours(zone.damages.reduce((sum, d) => sum + (d.directHours ?? 0), 0), multiplier),
+    steps: restorationSteps(grid, zone, multiplier, stepOfCustomer),
   }));
   zones.sort((a, b) => b.customers.length - a.customers.length);
 
-  return { noPower, zones };
+  return { noPower, zones, stepOfCustomer };
+}
+
+// Split one outage into restoration steps: one per damaged device, in the order
+// restorationOrder picks. Each step lists the customers it brings back (those
+// whose most downstream damaged device it is). Fills stepOfCustomer.
+function restorationSteps(grid, zone, multiplier, stepOfCustomer) {
+  const jobs = new Map();
+  for (const damage of zone.damages) {
+    if (!jobs.has(damage.device)) {
+      jobs.set(damage.device, { id: damage.device, damages: [], laborHours: 0, served: 0, restores: [], after: new Set() });
+    }
+    const job = jobs.get(damage.device);
+    job.damages.push(damage);
+    job.laborHours += damage.directHours ?? 0;
+  }
+
+  for (const customer of zone.customers) {
+    // Damaged devices on this customer's line, transformer first, substation last.
+    const onPath = grid.customerChains[customer].filter((device) => jobs.has(device));
+    onPath.forEach((device, k) => {
+      const job = jobs.get(device);
+      job.served++;
+      for (const upstream of onPath.slice(k + 1)) job.after.add(upstream);
+    });
+    jobs.get(onPath[0]).restores.push(customer);
+  }
+
+  const order = restorationOrder([...jobs.values()].map((job) => ({ ...job, hours: repairClockHours(job.laborHours, multiplier) })));
+  return order.map((job, step) => {
+    for (const customer of job.restores) stepOfCustomer[customer] = step;
+    return {
+      device: job.id,
+      damages: job.damages,
+      hours: job.hours,
+      doneAfterHours: job.doneAfterHours,
+      customersRestored: job.restores.length,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -91,10 +132,26 @@ export function prepareForecast(grid) {
     deviceWeightedHours[device] += weight * hours;
   }
 
+  // Storm queue: crews fix repairs that restore the most customers first. A
+  // device's queue share is how far through the storm's repair work crews are,
+  // on average, when they reach it.
+  const atRisk = [...deviceWeight.keys()].filter((d) => deviceWeight[d] > 0);
+  atRisk.sort((a, b) => grid.devices[b].customers - grid.devices[a].customers);
+  const totalWork = atRisk.reduce((sum, d) => sum + deviceWeightedHours[d], 0);
+  const deviceQueueShare = new Float64Array(grid.devices.length);
+  let workBefore = 0;
+  for (const d of atRisk) {
+    deviceQueueShare[d] = (workBefore + deviceWeightedHours[d] / 2) / (totalWork || 1);
+    workBefore += deviceWeightedHours[d];
+  }
+
   // Per customer: every pole that can cut its power is behind some device in its chain.
   const customers = grid.customerChains.length;
   const exposure = new Float64Array(customers);
   const repairHours = new Float64Array(customers);
+  // The most downstream device on the line that can fail (-1 if none), and its queue share.
+  const lastRepairDevice = new Int32Array(customers).fill(-1);
+  const queueShare = new Float64Array(customers).fill(0.5);
   grid.customerChains.forEach((chain, i) => {
     let weight = 0;
     let weightedHours = 0;
@@ -104,9 +161,15 @@ export function prepareForecast(grid) {
     }
     exposure[i] = weight;
     repairHours[i] = weight ? weightedHours / weight : 0;
+    // Chains run transformer -> substation, so the first at-risk device is the most downstream.
+    const last = chain.find((device) => deviceWeight[device] > 0);
+    if (last !== undefined) {
+      lastRepairDevice[i] = last;
+      queueShare[i] = deviceQueueShare[last];
+    }
   });
 
-  return { exposure, repairHours };
+  return { exposure, repairHours, lastRepairDevice, queueShare };
 }
 
 // Forecast outages for a storm severity from 0 (calm) to 1 (the worst storm in the data).
@@ -144,7 +207,11 @@ export function stormForecast(grid, prepared, severity, crews) {
   let hoursOut = 0;
   for (let i = 0; i < customers; i++) {
     const chanceOut = failureChance(scale, prepared.exposure[i]);
-    const hoursIfOut = hoursWithoutPower(repairClockHours(prepared.repairHours[i], multiplier), clearHours);
+    const hoursIfOut = hoursWithoutPower(
+      repairClockHours(prepared.repairHours[i], multiplier),
+      clearHours,
+      prepared.queueShare[i],
+    );
     expectedHours[i] = expectedHoursWithoutPower(chanceOut, hoursIfOut);
     customersOut += chanceOut;
     hoursOut += chanceOut * hoursIfOut;
