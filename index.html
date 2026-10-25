@@ -1,26 +1,94 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Packet Loss</title>
-    <link rel="stylesheet" href="/src/style.css" />
-  </head>
-  <body>
-    <nav class="nav">
-      <a href="/" class="brand">Packet Loss</a>
-      <div class="links">
-        <a href="/" class="active">Home</a>
-        <a href="/map.html">Map</a>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Map · Packet Loss</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body class="map-page">
+  <nav class="nav">
+    <a href="/" class="brand">Packet Loss</a>
+    <div class="links">
+      <a href="/">Home</a>
+      <a href="/map.html" class="active">Map</a>
+    </div>
+  </nav>
+
+  <div class="map-wrap">
+    <div id="map" tabindex="-1"></div>
+    <div class="map-controls">
+      <div class="search-panel">
+        <form id="search-form">
+          <input id="search-input" type="search" placeholder="Enter an address, street, or area" autocomplete="street-address"
+            required />
+          <button type="submit">Search</button>
+        </form>
+        <div id="search-result" hidden></div>
+        <button id="open-chat" class="open-chat" type="button" hidden>Back to your conversation &rarr;</button>
       </div>
-    </nav>
+      <section id="hull-panel" class="hull-panel" aria-hidden="true" inert aria-labelledby="hull-panel-title">
+        <div class="hull-panel-inner">
+          <div class="hull-panel-card">
+            <header class="hull-panel-header">
+              <h2 id="hull-panel-title"></h2>
+              <button id="hull-panel-close" type="button" aria-label="Close boundary details">&times;</button>
+            </header>
+            <p id="hull-panel-text"></p>
+          </div>
+        </div>
+      </section>
+      <div class="legend">
+        <strong>Outages</strong>
+        <div id="customer-count">Loading…</div>
+        <label><input type="checkbox" data-layer="outages" data-default="on" autocomplete="off" /><span class="dot"
+            style="background: rgba(var(--map-hull-fill)); border: 2px solid rgb(var(--map-hull-outline))"></span>Area without power</label>
+        <label><input type="checkbox" data-layer="damage" autocomplete="off" /><span class="dot ring"
+            style="border-color: rgb(var(--map-damage))"></span>Damaged equipment</label>
+        <label><input type="checkbox" data-layer="nearest" autocomplete="off" /><span class="dot ring"
+            style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
+      </div>
+    </div>
+    <section class="storm-panel" aria-labelledby="storm-title">
+      <div class="storm-header">
+        <label id="storm-title" for="storm-severity">Storm severity</label>
+        <output id="storm-value" for="storm-severity">0%</output>
+      </div>
+      <input id="storm-severity" type="range" min="0" max="100" step="5" value="0" autocomplete="off" />
+      <div class="storm-scale"><span>Calm</span><span>Worst on record</span></div>
+      <p id="storm-summary" aria-live="polite"></p>
+      <div id="heat-legend" hidden>
+        <div class="heat-bar"></div>
+        <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
+      </div>
+      <p id="storm-assumptions" class="simulation-note"></p>
+    </section>
+    <!-- Full-page assistant. Searching a location opens it over the map; the map
+         stays loaded underneath so the assistant's tools can keep using it. -->
+    <section id="chatbot" class="chat-view" aria-label="Outage assistant" hidden>
+      <header class="chat-view-bar">
+        <button class="back-to-map" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round" />
+          </svg>
+          Back to map
+        </button>
+        <strong>Outage Assistant</strong>
+      </header>
+      <div class="chatbot-messages" aria-live="polite"></div>
+      <form class="chatbot-form">
+        <input class="chatbot-input" type="text" placeholder="Ask a follow-up question…" autocomplete="off"
+          required />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+  </div>
 
-    <main class="hero">
-      <h1>Welcome to Packet Loss</h1>
-      <p>Our Hack Ohio project. Replace this text with what you're building.</p>
-      <a href="/map.html" class="button">Open the map</a>
-    </main>
+  <script type="module" src="/src/map.js"></script>
+  <script type="module" src="/src/chatbot.js"></script>
+</body>
 
-    <footer class="footer">Hack Ohio 2026</footer>
-  </body>
 </html>
