@@ -7,7 +7,7 @@ const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 // Fallback center: AEP challenge service area, southwest Virginia
 const DEFAULT_CENTER = { lat: 37.237, lng: -79.949 };
 
-// Service kind codes from scripts/build-customers.js
+// Service kind codes from scripts/dataBuildScripts/build-customers.js
 const KIND_LABELS = ["Overhead", "Underground", "Unknown"];
 // Legend checkbox keys for each kind code; must match data-layer in map.html
 const KIND_KEYS = ["overhead", "underground", "unknown"];

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "data:customers": "node scripts/build-customers.js"
+    "data:customers": "node scripts/dataBuildScripts/build-customers.js"
   },
   "devDependencies": {
     "shapefile": "^0.6.6",

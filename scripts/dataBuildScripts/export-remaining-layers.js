@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 // Locate the project using this script's location.
-const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 // Use the installed QGIS tools. QGIS_BIN can override this on another computer.
 const qgisBin =
