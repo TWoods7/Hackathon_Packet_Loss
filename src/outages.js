@@ -1,5 +1,14 @@
 // Outage engine: decide which customers lose power when devices trip.
 // Data comes from public/data/grid.json (npm run data:grid).
+// Every time formula comes from restorationModel.js.
+import {
+  crewHours,
+  repairClockHours,
+  failureChance,
+  stormClearHours,
+  hoursWithoutPower,
+  expectedHoursWithoutPower,
+} from "./restorationModel.js";
 
 // Turn a { fields, rows } table into an array of objects.
 function rowsToObjects({ fields, rows }) {
@@ -56,11 +65,11 @@ export function computeOutages(grid, tripped, damages) {
     zoneOfDevice.get(damage.device)?.damages.push(damage);
   }
 
-  // Crew-hours = direct labor x the workbook's indirect labor multiplier.
+  // Crew-hours of repair work for each outage (formula in restorationModel.js).
   const multiplier = grid.meta.indirectLaborMultiplier;
   const zones = [...zonesByDevice.values()].map((zone) => ({
     ...zone,
-    crewHours: zone.damages.reduce((sum, d) => sum + (d.directHours ?? 0), 0) * multiplier,
+    crewHours: crewHours(zone.damages.reduce((sum, d) => sum + (d.directHours ?? 0), 0), multiplier),
   }));
   zones.sort((a, b) => b.customers.length - a.customers.length);
 
@@ -69,13 +78,8 @@ export function computeOutages(grid, tripped, damages) {
 
 // ---------------------------------------------------------------------------
 // Storm forecast: chance of losing power and expected hours without power.
+// The formulas themselves live in restorationModel.js.
 // ---------------------------------------------------------------------------
-
-// Repair crews working the storm, and people per crew (labor hours are per person).
-// 60 crews of 4 restore the worst storm in about two days on average, matching the
-// 1-2 day median repair time recorded for the Feb 2025 storm.
-export const CREWS = 60;
-export const CREW_SIZE = 4;
 
 // Precompute per-customer totals once; the slider then only rescales them.
 export function prepareForecast(grid) {
@@ -112,11 +116,11 @@ export function stormForecast(grid, prepared, severity) {
   const result = { severity, expectedHours, brokenPoles: 0, customersOut: 0, typicalHours: 0, stormClearHours: 0 };
   if (severity <= 0) return result;
 
-  // Each pole fails with chance 1 - e^(-scale x weight). Find the scale that breaks,
-  // on average, the requested share of the worst storm's poles and wires.
+  // Find the storm scale that breaks, on average, the requested share of the
+  // worst storm's poles and wires.
   const target = severity * grid.meta.worstStorm.lineDamage;
   const expectedFailures = (scale) =>
-    grid.candidates.reduce((sum, row) => sum + 1 - Math.exp(-scale * row[3]), 0);
+    grid.candidates.reduce((sum, row) => sum + failureChance(scale, row[3]), 0);
   let low = 0;
   let high = 1;
   while (expectedFailures(high) < target) high *= 2;
@@ -127,21 +131,20 @@ export function stormForecast(grid, prepared, severity) {
   }
   const scale = high;
 
-  // Crew time for one repair = direct hours x indirect multiplier / people per crew.
-  const crewHoursPerRepair = grid.meta.indirectLaborMultiplier / CREW_SIZE;
-  const totalCrewHours = grid.candidates.reduce(
-    (sum, row) => sum + (1 - Math.exp(-scale * row[3])) * row[4] * crewHoursPerRepair,
+  // Total clock time of every expected repair, then how long all crews need for it.
+  const multiplier = grid.meta.indirectLaborMultiplier;
+  const totalClockHours = grid.candidates.reduce(
+    (sum, row) => sum + failureChance(scale, row[3]) * repairClockHours(row[4], multiplier),
     0,
   );
-  // All crews together clear the storm in this long; a customer waits half of it on average.
-  const stormClearHours = totalCrewHours / CREWS;
+  const clearHours = stormClearHours(totalClockHours);
 
   let customersOut = 0;
   let hoursOut = 0;
   for (let i = 0; i < customers; i++) {
-    const chanceOut = 1 - Math.exp(-scale * prepared.exposure[i]);
-    const hoursIfOut = prepared.repairHours[i] * crewHoursPerRepair + stormClearHours / 2;
-    expectedHours[i] = chanceOut * hoursIfOut;
+    const chanceOut = failureChance(scale, prepared.exposure[i]);
+    const hoursIfOut = hoursWithoutPower(repairClockHours(prepared.repairHours[i], multiplier), clearHours);
+    expectedHours[i] = expectedHoursWithoutPower(chanceOut, hoursIfOut);
     customersOut += chanceOut;
     hoursOut += chanceOut * hoursIfOut;
   }
@@ -152,6 +155,6 @@ export function stormForecast(grid, prepared, severity) {
     brokenPoles: target,
     customersOut,
     typicalHours: customersOut ? hoursOut / customersOut : 0,
-    stormClearHours,
+    stormClearHours: clearHours,
   };
 }

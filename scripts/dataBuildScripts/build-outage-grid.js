@@ -5,6 +5,8 @@
 
 // Import Node's built-in asynchronous file functions.
 import { readFile, writeFile } from "node:fs/promises";
+// Repair-time formulas are shared with the map; see that file to change them.
+import { repairLaborHours } from "../../src/restorationModel.js";
 
 // Read and parse a JSON file.
 async function readJson(path) {
@@ -400,43 +402,12 @@ const worstStormLineDamage = stormLineDamage(worstStorm);
 // 5. Current damage: unrepaired reports, matched to the device they trip.
 // ---------------------------------------------------------------------------
 
-// Count phases from a phase string like "ABC" or "B".
-const phaseCount = (phases) => Math.max(1, key(phases).replace(/[^ABC]/g, "").length);
-
-// Direct labor hours for one damage using the recipe for its asset type.
-function directHours(p, asset) {
-  const recipe = labor.recipes[p.Asset_Type];
-  if (!recipe) return null;
-
-  const hoursFor = (cu, mode) =>
-    mode === "install" ? cu.install : mode === "remove" ? cu.remove : cu.install + cu.remove;
-
-  let hours = 0;
-  for (const [part, quantity, mode] of recipe) {
-    let cu = labor.cu[part];
-    let count = quantity === "perPhase" ? phaseCount(asset?.existing_p) : quantity;
-
-    if (part === "pole") {
-      const feet = Number.parseFloat(asset?.height ?? "") || 40;
-      cu = labor.poleBySize.find((size) => feet <= size.maxFeet);
-    } else if (part === "transformer" || part === "transformer833") {
-      const specs = [asset?.a_phase_sp, asset?.b_phase_sp, asset?.c_phase_sp].filter(Boolean);
-      const kva = part === "transformer833" ? 833 : Number.parseFloat(specs[0] ?? "") || 25;
-      cu = labor.transformerByKva.reduce((a, b) => (Math.abs(b.kva - kva) < Math.abs(a.kva - kva) ? b : a));
-      if (part === "transformer") count = specs.length || 1;
-    }
-    hours += hoursFor(cu, mode) * count;
-  }
-
-  // Add workbook adders for access problems and special equipment.
-  const equipment = p.Special_Eq;
-  if (p.Access_Iss === "Yes") hours += labor.adders.restrictedAccess.hours;
-  if (equipment === "Backyard Bucket" || equipment === "Yard Dog") hours += labor.adders.confinedProperty.hours;
-  else if (equipment === "Track Hoe" || equipment === "Backhoe") hours += labor.adders.remoteSite.hours;
-  else if (equipment) hours += labor.adders.specializedHandling.hours;
-
-  return Math.round(hours * 1000) / 1000;
-}
+// Direct labor hours for one damage report (formula in src/restorationModel.js).
+const directHours = (p, asset) =>
+  repairLaborHours(labor, p.Asset_Type, asset, {
+    accessIssue: p.Access_Iss === "Yes",
+    specialEquipment: p.Special_Eq,
+  });
 
 // Find the asset a damage report sits on and the device that loses power.
 function traceDamage(p, point) {

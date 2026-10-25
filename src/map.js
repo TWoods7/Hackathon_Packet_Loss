@@ -7,9 +7,8 @@ import {
   computeOutages,
   prepareForecast,
   stormForecast,
-  CREWS,
-  CREW_SIZE,
 } from "./outages.js";
+import { CREWS, CREW_SIZE } from "./restorationModel.js";
 
 const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
