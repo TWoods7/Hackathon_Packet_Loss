@@ -354,6 +354,17 @@ body {
   margin: 8px 0 0;
 }
 
+/* Summary text on top, controls underneath (see index.html). */
+.storm-text > :first-child {
+  margin-top: 0;
+}
+
+.storm-controls {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 .heat-bar {
   height: 10px;
   margin-top: 8px;

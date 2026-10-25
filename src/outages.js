@@ -114,6 +114,7 @@ function restorationSteps(grid, zone, multiplier, stepOfCustomer) {
       device: job.id,
       damages: job.damages,
       hours: job.hours,
+      workDoneHours: job.workDoneHours,
       doneAfterHours: job.doneAfterHours,
       customersRestored: job.restores.length,
       priority: job.priority > 0,

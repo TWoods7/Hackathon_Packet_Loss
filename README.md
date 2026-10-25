@@ -157,7 +157,21 @@ The original historical damage records remain in `grid.damages`; the current map
 
 Circles summarize geographic spread, not outage probability or damage density. Each outage is drawn as one circle per ~1 km grid cell that has affected customers (`OUTAGE_CELL_DEGREES` in `map.js`), so a long outage appears as a trail of small circles. Centers are coarsened, the minimum radius is 300 m, and each radius covers that cell's farthest affected customer plus 100 m. Unaffected locations may lie inside a circle. Use the selected location's network-based tool result, not apparent circle inclusion, to determine its simulated status.
 
-Repair work is calculated from the labor recipes and indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies, then puts ready repairs that restore a priority location first, then prioritizes by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever the storm level changes.
+**Repair times come from the team's time sheet** (`Chat AEP Time Calculations.csv`, stored as `jobs` in `public/data/labor.json` with each job's sheet number). Every job is the sum of component times from AEP's `Install_Labor_HackOHIO.xlsx` workbook, and the program picks the job for each damaged asset in `repairJob()` (`src/restorationModel.js`):
+
+| Damaged asset | Sheet job |
+|---|---|
+| Pole carrying only service wire | 1, Secondary Pole (4.47 h) |
+| Pole on the primary line | 2, Primary Pole (5.66 h) |
+| Pole with a transformer, by kVA | 3a-3l, Transformer Pole (8.2-8.6 h) |
+| Pole with a fuse bank, switch, or recloser | 4, 6, 7 (6.2-8.1 h) |
+| Wire (primary or secondary) | 9, Damaged Wire (0.45 h) |
+| Transformer, by kVA | 8a-8l, Standalone Transformer (2.0-2.4 h) |
+| Fuse bank, recloser, capacitor bank, switch | 10a, 10c, 10b, 11b |
+
+Equipment on a pole is found by the `location_n` it shares with the pole. Hours above are direct labor; the sheet's rules then apply: ×4.5 indirect labor multiplier, +0.5 h restricted-access adder when `Access_Iss = Yes` (or **Roads blocked** is ticked), a 50% chance of one cubic foot of hand digging (+1.5 h) on jobs that set a pole (a fixed draw per pole site, hashed from the pole ID), and 0.5 h of lunch for every 8 hours of continuous crew work (`withLunchBreaks()`). Step transformers and lights aren't on the sheet and use workbook components (`recipes`). The default of 110 crews is calibrated so the worst storm matches its recorded repair times (median 1 day, 90th percentile 3 days from report to repair).
+
+Repair work is calculated from these jobs and the indirect multiplier. For each sampled outage, `restorationOrder()` waits for upstream dependencies, then puts ready repairs that restore a priority location first, then prioritizes by customers served per repair hour. One crew handles the area's ordered steps. `stepOfCustomer` identifies the step that restores each affected customer; the map and assistant refresh this lookup together whenever the storm level changes.
 
 Step times describe elapsed work after the area's crew starts, with normal access. The assistant's planning range additionally considers declared access allowances and waiting for work elsewhere in the storm. It excludes the area's own labor from that outside backlog to avoid double counting. Crew count can change the modeled wait while the area's baseline one-crew sequence stays the same. `restorationRange()` and `sampledRestorationRange()` in `restorationModel.js` contain the duration formulas.
 

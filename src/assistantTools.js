@@ -5,7 +5,7 @@
 import { stormForecast } from "./outages.js";
 // Reuse the shared failure, queue, and restoration-range formulas.
 import {
-  CREWS, CREW_SIZE, failureChance, repairClockHours,
+  CREWS, CREW_SIZE, failureChance, repairClockHours, withLunchBreaks,
   expectedRepairsOnPath, restorationRange, sampledRestorationRange,
 } from "./restorationModel.js";
 import { stormLevel, levelSeverity, levelLineDamage } from "./stormLevels.js";
@@ -162,7 +162,8 @@ function outageSteps(customer, accessClockHours = 0) {
   let repairsSoFar = 0;
   const doneHours = zone.steps.map((step) => {
     repairsSoFar += step.damages.length;
-    return step.doneAfterHours + accessClockHours * repairsSoFar;
+    // Same rule as the map panel: lunch breaks on the continuous work so far.
+    return withLunchBreaks(step.workDoneHours + accessClockHours * repairsSoFar);
   });
   const steps = zone.steps.map((step, i) => ({
     step: i + 1,

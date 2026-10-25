@@ -5,7 +5,7 @@ import {
   loadGrid,
   prepareForecast,
 } from "./outages.js";
-import { CREWS, CREW_SIZE, repairClockHours } from "./restorationModel.js";
+import { CREWS, CREW_SIZE, repairClockHours, withLunchBreaks } from "./restorationModel.js";
 import { registerMapApi } from "./assistantTools.js";
 import { STORM_LEVELS, levelSeverity, levelLineDamage } from "./stormLevels.js";
 // Use the tested sampler and outage calculations as one source of scenario state.
@@ -185,12 +185,13 @@ function roughCustomers(n) {
 
 // Title and multi-line text for an outage's side panel.
 // Life-support counts and circuit IDs stay out: they are internal or could identify a household.
-// Clock hours until a restoration step finishes, adding the blocked-roads
-// allowance (accessClockHours) for every repair up to and including it.
+// Elapsed hours until a restoration step finishes: the crew's work so far plus
+// the blocked-roads allowance (accessClockHours) for every repair up to and
+// including it, then lunch breaks on that continuous work.
 function stepDoneHours(zone, stepIndex, accessClockHours) {
   let repairs = 0;
   for (let i = 0; i <= stepIndex; i++) repairs += zone.steps[i].damages.length;
-  return zone.steps[stepIndex].doneAfterHours + accessClockHours * repairs;
+  return withLunchBreaks(zone.steps[stepIndex].workDoneHours + accessClockHours * repairs);
 }
 
 // accessClockHours: extra time per repair when roads are blocked (0 otherwise).
@@ -396,12 +397,13 @@ async function initMap() {
     mapTypeControlOptions: {
       position: google.maps.ControlPosition.TOP_RIGHT,
     },
-    // Default spot (bottom-right) sits under the chatbot
+    // Default spot (bottom-right) sits under the storm panel. RIGHT_TOP stacks
+    // these down the right edge, just below the map-type control.
     cameraControlOptions: {
-      position: google.maps.ControlPosition.RIGHT_CENTER,
+      position: google.maps.ControlPosition.RIGHT_TOP,
     },
     streetViewControlOptions: {
-      position: google.maps.ControlPosition.RIGHT_CENTER,
+      position: google.maps.ControlPosition.RIGHT_TOP,
     },
   });
   const serviceBounds = fitToCustomers(map, customers);

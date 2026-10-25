@@ -7,7 +7,7 @@
 // Import Node's built-in asynchronous file functions.
 import { readFile, writeFile } from "node:fs/promises";
 // Repair-time formulas are shared with the map; see that file to change them.
-import { repairLaborHours } from "../../src/restorationModel.js";
+import { repairLaborHours, transformerKva } from "../../src/restorationModel.js";
 
 // Read and parse a JSON file.
 async function readJson(path) {
@@ -403,11 +403,50 @@ const worstStormLineDamage = stormLineDamage(worstStorm);
 // 5. Current damage: unrepaired reports, matched to the device they trip.
 // ---------------------------------------------------------------------------
 
+// Equipment mounted on each pole, by the location_n it shares with the pole.
+// When a pole carries several, the job follows the first in this list: a
+// recloser pole job already includes a transformer, and a transformer pole job
+// a fuse cutout (see labor.json jobs).
+const equipmentAtLocation = new Map();
+for (const [equipment, features] of [
+  ["Recloser Bank", reclosers.features],
+  ["Transformer", transformers.features],
+  ["Switch", switches.features],
+  ["Fuse Bank", fuses.features],
+]) {
+  for (const feature of features) {
+    const location = key(feature.properties.location_n);
+    if (location && !equipmentAtLocation.has(location)) {
+      equipmentAtLocation.set(location, { equipment, kva: equipment === "Transformer" ? transformerKva(feature.properties) : null });
+    }
+  }
+}
+
+// What a pole repair involves: primary or service-only, and mounted equipment.
+function poleSite(pole, onPrimary) {
+  const mounted = equipmentAtLocation.get(key(pole?.location_n));
+  return { onPrimary, equipment: mounted?.equipment ?? null, kva: mounted?.kva ?? null };
+}
+
+// Whether a pole site needs hand digging: a fixed draw per pole ID (FNV-1a
+// hash), so each site gets the same answer in every storm and every rebuild.
+function needsExcavation(pole) {
+  let hash = 0x811c9dc5;
+  for (const ch of String(pole?.id ?? "")) hash = Math.imul(hash ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  return hash / 2 ** 32 < labor.excavation.chance;
+}
+
 // Direct labor hours for one damage report (formula in src/restorationModel.js).
+// For poles, asset is the matched pole; it counts as primary when the network
+// graph has a node at its location.
 const directHours = (p, asset) =>
   repairLaborHours(labor, p.Asset_Type, asset, {
     accessIssue: p.Access_Iss === "Yes",
     specialEquipment: p.Special_Eq,
+    ...(p.Asset_Type === "Pole" && {
+      pole: poleSite(asset, nodesAtLocation.has(key(asset?.location_n))),
+      excavation: needsExcavation(asset),
+    }),
   });
 
 // Find the asset a damage report sits on and the device that loses power.
@@ -495,12 +534,12 @@ for (const f of damage.features) {
 // ---------------------------------------------------------------------------
 
 // Weight = circuit's historical line-damage rate per pole; service poles count half.
-// Repair hours: a pole on the primary lines gets the pole recipe (sized by height);
-// a service-only pole gets the secondary-wire recipe.
+// Repair hours: the time sheet's pole job for what the pole carries (primary or
+// service-only line, mounted equipment), plus hand digging at sites that need it.
 const candidates = candidateRows.map(({ point, device, circuit, onPrimary, pole }) => {
   const rate = (lineDamageByCircuit.get(circuit) ?? 0) / (polesByCircuit.get(circuit) ?? 1);
   const weight = (rate + 0.0005) * (onPrimary ? 1 : 0.5);
-  const hours = directHours({ Asset_Type: onPrimary ? "Pole" : "secondary" }, pole);
+  const hours = repairLaborHours(labor, "Pole", pole, { pole: poleSite(pole, onPrimary), excavation: needsExcavation(pole) });
   return [round(point[0]), round(point[1]), device, round(weight, 6), hours];
 });
 

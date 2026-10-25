@@ -1,10 +1,59 @@
 {
   "meta": {
-    "source": "Hand-copied from Install_Labor_HackOHIO.xlsx in hackohio/aep_challenge_hack26 (sheets: Labor time material related, Labor only work, Indirect Labor Multiplier). Values rounded to 3 decimals.",
-    "units": "Hours of direct labor per CU (compatible unit). Multiply direct hours by indirectLaborMultiplier to get crew-hours including drive, safety, and setup time.",
-    "recipes": "The workbook gives hours per component, not per damage. 'recipes' is our team's assumption of which components a typical repair of each damage Asset_Type replaces: [component, quantity or \"perPhase\", \"install\" | \"remove\" | \"both\"]. Edit it to change restoration estimates."
+    "source": "Component hours hand-copied from Install_Labor_HackOHIO.xlsx in hackohio/aep_challenge_hack26 (sheets: Labor time material related, Labor only work, Indirect Labor Multiplier). Values rounded to 3 decimals.",
+    "units": "Hours of direct labor (wrench time). Multiply direct hours by indirectLaborMultiplier to get person-hours including staging, safety, traffic control, material handling, switching, travel, and environmental delay.",
+    "jobs": "Repair jobs from the team's time sheet (Chat AEP Time Calculations.csv). Each job's install and remove hours are the sum of the workbook component times listed in 'components'; 'job' is the sheet's job number. restorationModel.js picks the job for each damaged asset; for a pole, the job depends on what's mounted on it.",
+    "recipes": "Fallback for the two asset types the time sheet doesn't cover (Step Transformer, Light): [component, quantity, \"install\" | \"remove\" | \"both\"] from 'cu'."
   },
   "indirectLaborMultiplier": 4.5,
+  "jobs": {
+    "secondaryPole": { "job": "1", "install": 3.267, "remove": 1.207, "setsPole": true, "components": "Base Pole + Grounding + Secondary Conductor Attachment" },
+    "primaryPole": { "job": "2", "install": 4.075, "remove": 1.586, "setsPole": true, "components": "Base Pole + Crossarm + Bracket + Grounding + Insulator" },
+    "transformerPole": [
+      { "job": "3a", "kva": 10, "install": 5.687, "remove": 2.528, "setsPole": true },
+      { "job": "3b", "kva": 15, "install": 5.681, "remove": 2.52, "setsPole": true },
+      { "job": "3c", "kva": 25, "install": 5.685, "remove": 2.526, "setsPole": true },
+      { "job": "3d", "kva": 37.5, "install": 5.736, "remove": 2.602, "setsPole": true },
+      { "job": "3e", "kva": 50, "install": 5.742, "remove": 2.611, "setsPole": true },
+      { "job": "3f", "kva": 75, "install": 5.775, "remove": 2.657, "setsPole": true },
+      { "job": "3g", "kva": 100, "install": 5.777, "remove": 2.664, "setsPole": true },
+      { "job": "3h", "kva": 167, "install": 5.777, "remove": 2.664, "setsPole": true },
+      { "job": "3i", "kva": 250, "install": 5.828, "remove": 2.683, "setsPole": true },
+      { "job": "3j", "kva": 333, "install": 5.852, "remove": 2.698, "setsPole": true },
+      { "job": "3k", "kva": 500, "install": 5.877, "remove": 2.707, "setsPole": true },
+      { "job": "3l", "kva": 833, "install": 5.861, "remove": 2.7, "setsPole": true }
+    ],
+    "transformerPoleComponents": "Base Pole + Crossarm + Bracket + Grounding + Fuse Cutout + Average Connector + Transformer (by kVA)",
+    "fuseBankPole": { "job": "4", "install": 4.497, "remove": 1.72, "setsPole": true, "components": "Base Pole + Crossarm + Bracket + Grounding + Fuse Cutout + Average Connector" },
+    "capacitorBankPole": { "job": "5", "install": 5.435, "remove": 2.711, "setsPole": true, "components": "Base Pole + Crossarm + Grounding + Insulator + Capacitor Bank + 10 kVA Transformer + Average Connector" },
+    "switchPole": { "job": "6", "install": 5.382, "remove": 2.347, "setsPole": true, "components": "Base Pole + Crossarm + Grounding + Switch + Average Connector" },
+    "recloserBankPole": { "job": "7", "install": 5.435, "remove": 2.711, "setsPole": true, "components": "Base Pole + Crossarm + Grounding + Insulator + Recloser + 10 kVA Transformer + Average Connector" },
+    "standaloneTransformer": [
+      { "job": "8a", "kva": 10, "install": 1.189, "remove": 0.808 },
+      { "job": "8b", "kva": 15, "install": 1.184, "remove": 0.8 },
+      { "job": "8c", "kva": 25, "install": 1.188, "remove": 0.806 },
+      { "job": "8d", "kva": 37.5, "install": 1.238, "remove": 0.882 },
+      { "job": "8e", "kva": 50, "install": 1.245, "remove": 0.891 },
+      { "job": "8f", "kva": 75, "install": 1.278, "remove": 0.937 },
+      { "job": "8g", "kva": 100, "install": 1.28, "remove": 0.944 },
+      { "job": "8h", "kva": 167, "install": 1.28, "remove": 0.944 },
+      { "job": "8i", "kva": 250, "install": 1.33, "remove": 0.962 },
+      { "job": "8j", "kva": 333, "install": 1.355, "remove": 0.978 },
+      { "job": "8k", "kva": 500, "install": 1.38, "remove": 0.987 },
+      { "job": "8l", "kva": 833, "install": 1.364, "remove": 0.98 }
+    ],
+    "damagedWire": { "job": "9", "install": 0.448, "remove": 0, "components": "Secondary Conductor Attachment (install) + Average Connector (install)" },
+    "fuseBank": { "job": "10a", "install": 0.256, "remove": 0.128, "components": "Fuse Cutout" },
+    "capacitorBank": { "job": "10b", "install": 0.573, "remove": 0.525, "components": "Capacitor Bank (recloser CU)" },
+    "recloserBank": { "job": "10c", "install": 0.573, "remove": 0.525, "components": "Recloser" },
+    "switch": { "job": "11b", "install": 1.758, "remove": 1.01, "components": "Switch" }
+  },
+  "excavation": {
+    "hours": 1.5,
+    "chance": 0.5,
+    "label": "Manual Excavation (Hand Dig), 1 cubic foot",
+    "appliesWhen": "A job sets a new pole and the site needs hand digging. Each pole site has a fixed 50% chance (hashed from the pole ID), so a site either needs it or doesn't, in every storm. The workbook prices hand digging per cubic foot; 1 cubic foot is the team's assumption."
+  },
   "cu": {
     "crossarm": { "install": 0.374, "remove": 0.212 },
     "bracket": { "install": 0.617, "remove": 0.254 },
@@ -22,11 +71,6 @@
     "fuseCutout": { "install": 0.256, "remove": 0.128 },
     "connector": { "install": 0.215, "remove": 0.045 }
   },
-  "poleBySize": [
-    { "size": "Small", "maxFeet": 35, "install": 1.942, "remove": 0.764 },
-    { "size": "Medium", "maxFeet": 55, "install": 2.503, "remove": 0.927 },
-    { "size": "Large", "maxFeet": 999, "install": 3.368, "remove": 1.153 }
-  ],
   "transformerByKva": [
     { "kva": 10, "install": 1.189, "remove": 0.808 },
     { "kva": 15, "install": 1.184, "remove": 0.8 },
@@ -48,14 +92,6 @@
     "specializedHandling": { "hours": 0.5, "label": "Specialized Handling Adder", "appliesWhen": "Special_Eq = Big Bucket, Material Handler, Tandem Bucket, Tandem Line, or Other" }
   },
   "recipes": {
-    "Pole": [["pole", 1, "both"], ["crossarm", 1, "both"], ["insulator", 3, "both"], ["pin", 3, "both"], ["grounding", 1, "install"], ["guying", 1, "both"]],
-    "primary": [["connector", 2, "install"], ["deadEnd", 2, "both"], ["insulator", 1, "both"]],
-    "secondary": [["secondaryAttachment", 2, "both"], ["connector", 2, "install"]],
-    "Transformer": [["transformer", "perPhase", "both"], ["equipmentLead", 1, "install"], ["fuseCutout", 1, "both"]],
-    "Fuse Bank": [["fuseCutout", "perPhase", "both"]],
-    "Recloser Bank": [["recloser", "perPhase", "both"], ["equipmentLead", 1, "install"]],
-    "Switch": [["switch", 1, "both"]],
-    "Capacitor Bank": [["equipmentLead", 3, "install"], ["fuseCutout", 3, "both"]],
     "Step Transformer": [["transformer833", 1, "both"], ["equipmentLead", 1, "install"]],
     "Light": [["bracket", 1, "both"]]
   }

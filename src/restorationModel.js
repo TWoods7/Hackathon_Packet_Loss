@@ -11,43 +11,80 @@
 // ---------------------------------------------------------------------------
 
 // Repair crews working a storm, and people per crew (workbook labor hours are per person).
-// 60 crews of 4 restore the worst storm in about two days on average, matching the
-// 1-2 day median repair time recorded for the Feb 2025 storm.
-export const CREWS = 60;
+// Calibrated to the Feb 12-17, 2025 storm's recorded repairs (report date to
+// repair date: median 1 day, 75th percentile 2 days, 90th percentile 3 days).
+// With the time sheet's job hours, 110 crews of 4 give that storm an average of
+// about 2 days without power and finish every repair in about 2.9 days.
+// Recalibrate if the job hours in labor.json change.
+export const CREWS = 110;
 export const CREW_SIZE = 4;
 
 // ---------------------------------------------------------------------------
-// 1. Labor hours for one repair, from public/data/labor.json
+// 1. Labor hours for one repair, from public/data/labor.json (team time sheet jobs)
 // ---------------------------------------------------------------------------
 
-// Count phases from a phase string like "ABC" or "B".
-const phaseCount = (phases) => Math.max(1, String(phases ?? "").replace(/[^ABC]/g, "").length);
+// Nearest kVA entry in a list of { kva, ... }.
+const byKva = (list, kva) => list.reduce((a, b) => (Math.abs(b.kva - kva) < Math.abs(a.kva - kva) ? b : a));
 
-// Direct labor hours (one person) to repair one damaged asset of assetType.
-// asset: the GIS attributes of the matched asset (pole height, transformer size, phases).
-// conditions: { accessIssue, specialEquipment } from the damage report, if any.
+// Transformer size from its GIS phase specs ("25 KVA" -> 25); 25 kVA if unknown.
+export function transformerKva(asset) {
+  const spec = [asset?.a_phase_sp, asset?.b_phase_sp, asset?.c_phase_sp].find(Boolean);
+  return Number.parseFloat(spec ?? "") || 25;
+}
+
+// The team time sheet's job for one damaged asset (labor.jobs), or null when
+// the sheet doesn't cover it. Damage reports carry an asset type but no damage
+// type, so the job follows the asset.
+// pole: for poles, { onPrimary, equipment, kva }: whether it carries primary
+// line, and the equipment mounted on it ("Recloser Bank", "Transformer",
+// "Switch", "Fuse Bank", or null) with the transformer's kVA.
+export function repairJob(labor, assetType, asset, pole) {
+  const jobs = labor.jobs;
+  switch (assetType) {
+    case "Pole":
+      if (pole?.equipment === "Recloser Bank") return jobs.recloserBankPole;
+      if (pole?.equipment === "Transformer") return byKva(jobs.transformerPole, pole.kva ?? 25);
+      if (pole?.equipment === "Switch") return jobs.switchPole;
+      if (pole?.equipment === "Fuse Bank") return jobs.fuseBankPole;
+      return pole?.onPrimary === false ? jobs.secondaryPole : jobs.primaryPole;
+    case "primary":
+    case "secondary":
+      return jobs.damagedWire;
+    case "Transformer":
+      return byKva(jobs.standaloneTransformer, transformerKva(asset));
+    case "Fuse Bank":
+      return jobs.fuseBank;
+    case "Recloser Bank":
+      return jobs.recloserBank;
+    case "Capacitor Bank":
+      return jobs.capacitorBank;
+    case "Switch":
+      return jobs.switch;
+    default:
+      return null;
+  }
+}
+
+// Direct labor hours (one person) to repair one damaged asset of assetType:
+// the time sheet's job, plus the workbook's adders.
+// asset: the GIS attributes of the matched asset (transformer size, phases).
+// conditions: { accessIssue, specialEquipment } from the damage report, plus
+// for poles { pole: see repairJob, excavation: true if the site needs hand digging }.
 export function repairLaborHours(labor, assetType, asset, conditions = {}) {
-  const recipe = labor.recipes[assetType];
-  if (!recipe) return null;
-
-  const hoursFor = (cu, mode) =>
-    mode === "install" ? cu.install : mode === "remove" ? cu.remove : cu.install + cu.remove;
-
-  let hours = 0;
-  for (const [part, quantity, mode] of recipe) {
-    let cu = labor.cu[part];
-    let count = quantity === "perPhase" ? phaseCount(asset?.existing_p) : quantity;
-
-    if (part === "pole") {
-      const feet = Number.parseFloat(asset?.height ?? "") || 40;
-      cu = labor.poleBySize.find((size) => feet <= size.maxFeet);
-    } else if (part === "transformer" || part === "transformer833") {
-      const specs = [asset?.a_phase_sp, asset?.b_phase_sp, asset?.c_phase_sp].filter(Boolean);
-      const kva = part === "transformer833" ? 833 : Number.parseFloat(specs[0] ?? "") || 25;
-      cu = labor.transformerByKva.reduce((a, b) => (Math.abs(b.kva - kva) < Math.abs(a.kva - kva) ? b : a));
-      if (part === "transformer") count = specs.length || 1;
+  const job = repairJob(labor, assetType, asset, conditions.pole);
+  let hours;
+  if (job) {
+    hours = job.install + job.remove;
+    if (job.setsPole && conditions.excavation) hours += labor.excavation.hours;
+  } else {
+    // Asset types the time sheet doesn't cover: build from workbook components.
+    const recipe = labor.recipes[assetType];
+    if (!recipe) return null;
+    hours = 0;
+    for (const [part, quantity, mode] of recipe) {
+      const cu = part === "transformer833" ? byKva(labor.transformerByKva, 833) : labor.cu[part];
+      hours += (mode === "install" ? cu.install : mode === "remove" ? cu.remove : cu.install + cu.remove) * quantity;
     }
-    hours += hoursFor(cu, mode) * count;
   }
 
   // Add workbook adders for access problems and special equipment.
@@ -69,9 +106,20 @@ export function crewHours(laborHours, indirectLaborMultiplier) {
   return laborHours * indirectLaborMultiplier;
 }
 
-// Clock hours for one crew to finish a repair.
+// Clock hours of work for one crew to finish a repair (no breaks).
 export function repairClockHours(laborHours, indirectLaborMultiplier) {
   return crewHours(laborHours, indirectLaborMultiplier) / CREW_SIZE;
+}
+
+// Lunch breaks from the team time sheet: 0.5 h for every 8 hours of continuous
+// elapsed crew work.
+export const LUNCH_BREAK_HOURS = 0.5;
+export const LUNCH_EVERY_HOURS = 8;
+
+// Elapsed clock hours for a stretch of continuous crew work, lunch breaks included.
+// Applied once to each elapsed time below, never to a sum of already-converted times.
+export function withLunchBreaks(workHours) {
+  return workHours + LUNCH_BREAK_HOURS * Math.floor(workHours / LUNCH_EVERY_HOURS);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,8 +135,9 @@ export function failureChance(stormScale, weight) {
 
 // How long all crews together need to clear every expected repair in the storm.
 // crews: override CREWS to explore staffing scenarios (the chatbot does this).
+// Each crew works its share continuously, so lunch breaks apply to that share.
 export function stormClearHours(totalRepairClockHours, crews = CREWS) {
-  return totalRepairClockHours / crews;
+  return withLunchBreaks(totalRepairClockHours / crews);
 }
 
 // Repairs a customer's line needs if it loses power at all. Every failure between
@@ -106,17 +155,20 @@ export function expectedRepairsOnPath(stormScale, weight) {
 // backlog crews are when they reach the last repair on this customer's line
 // (see prepareForecast in outages.js). Repairs that restore more customers go
 // first, so repairs upstream of it are usually done by then.
+// clearHours already includes lunch breaks (stormClearHours).
 export function hoursWithoutPower(ownRepairClockHours, clearHours, queueShare = 0.5) {
-  return ownRepairClockHours + clearHours * queueShare;
+  return withLunchBreaks(ownRepairClockHours) + clearHours * queueShare;
 }
 
 // Build a planning range from repair work and an assumed place in the backlog.
-// stepHours may include earlier repairs in the area's single-crew schedule.
+// ownRepairHours: work hours (no breaks) on this customer's own line.
+// stepHours: elapsed hours until the area's single-crew schedule reaches this
+// customer, lunch breaks included (restorationOrder's doneAfterHours).
 // This is an assumption-based range, not a statistical confidence interval.
-export function restorationRange(ownRepairHours, clearHours, queueShare = 0.5, stepHours = ownRepairHours) {
+export function restorationRange(ownRepairHours, clearHours, queueShare = 0.5, stepHours = withLunchBreaks(ownRepairHours)) {
   return {
-    lowHours: ownRepairHours,
-    typicalHours: hoursWithoutPower(stepHours, clearHours, queueShare),
+    lowHours: withLunchBreaks(ownRepairHours),
+    typicalHours: stepHours + clearHours * queueShare,
     highHours: stepHours + clearHours,
   };
 }
@@ -173,7 +225,8 @@ export function sampledRestorationRange({
 // jobs: [{ id, hours, served, after, priority }], where served = customers whose
 // line runs through this repair, after = Set of job ids upstream of it, and
 // priority = priority locations it restores (optional).
-// Returns the jobs in repair order, each with doneAfterHours from the start.
+// Returns the jobs in repair order, each with workDoneHours (work so far, no
+// breaks) and doneAfterHours (elapsed, lunch breaks included) from the start.
 export function restorationOrder(jobs) {
   const rate = (job) => job.served / Math.max(job.hours, 0.1);
   const first = (a, b) => ((b.priority > 0) !== (a.priority > 0) ? b.priority > 0 : rate(b) > rate(a));
@@ -187,7 +240,8 @@ export function restorationOrder(jobs) {
     pending.splice(pending.indexOf(next), 1);
     done.add(next.id);
     clock += next.hours;
-    order.push({ ...next, doneAfterHours: clock });
+    // The crew works continuously, so lunch breaks apply to the running total.
+    order.push({ ...next, workDoneHours: clock, doneAfterHours: withLunchBreaks(clock) });
   }
   return order;
 }

@@ -47,28 +47,34 @@
             style="border-color: rgb(var(--map-nearest))"></span>Nearest to you</label>
       </div>
     </div>
+    <!-- Changing text sits above the controls: the panel is pinned to the
+         bottom of the map, so it grows upward and the sliders never move. -->
     <section class="storm-panel" aria-labelledby="storm-title">
-      <div class="storm-header">
-        <label id="storm-title" for="storm-severity">Storm strength</label>
-        <output id="storm-value" for="storm-severity">Calm</output>
-      </div>
-      <input id="storm-severity" type="range" min="0" max="9" step="1" value="0" autocomplete="off" />
-      <div class="storm-scale"><span>Calm</span><span>Thunderstorm</span><span>Helene</span><span>Feb 2025</span></div>
-      <div class="repair-conditions">
-        <div class="storm-header">
-          <label for="repair-crews">Repair crews</label>
-          <output id="crews-value" for="repair-crews">60 crews</output>
+      <div class="storm-text">
+        <p id="storm-summary" aria-live="polite"></p>
+        <div id="heat-legend" hidden>
+          <div class="heat-bar"></div>
+          <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
         </div>
-        <input id="repair-crews" type="range" min="20" max="120" step="10" value="60" autocomplete="off" />
-        <label class="roads-blocked"><input id="roads-blocked" type="checkbox" autocomplete="off" />Roads blocked (fallen
-          trees, flooding)</label>
+        <p id="storm-assumptions" class="simulation-note"></p>
       </div>
-      <p id="storm-summary" aria-live="polite"></p>
-      <div id="heat-legend" hidden>
-        <div class="heat-bar"></div>
-        <div class="storm-scale"><span>Few hours</span><span>Expected hours without power</span><span>2+ days</span></div>
+      <div class="storm-controls">
+        <div class="storm-header">
+          <label id="storm-title" for="storm-severity">Storm strength</label>
+          <output id="storm-value" for="storm-severity">Calm</output>
+        </div>
+        <input id="storm-severity" type="range" min="0" max="9" step="1" value="0" autocomplete="off" />
+        <div class="storm-scale"><span>Calm</span><span>Thunderstorm</span><span>Helene</span><span>Feb 2025</span></div>
+        <div class="repair-conditions">
+          <div class="storm-header">
+            <label for="repair-crews">Repair crews</label>
+            <output id="crews-value" for="repair-crews">110 crews</output>
+          </div>
+          <input id="repair-crews" type="range" min="20" max="200" step="10" value="110" autocomplete="off" />
+          <label class="roads-blocked"><input id="roads-blocked" type="checkbox" autocomplete="off" />Roads blocked
+            (fallen trees, flooding)</label>
+        </div>
       </div>
-      <p id="storm-assumptions" class="simulation-note"></p>
     </section>
     <!-- Full-page assistant. Searching a location opens it over the map; the map
          stays loaded underneath so the assistant's tools can keep using it. -->
